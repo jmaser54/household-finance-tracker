@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:repo
+      - run: npm run build
+      - run: npm run check:build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      # Deliberately no artifact uploads: CI never publishes screenshots,
+      # traces or reports (PROJECT_PRINCIPLES.md §3.4).

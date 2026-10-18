@@ -1,0 +1,32 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+.env
+.env.*
+
+# ---------------------------------------------------------------------------
+# PRIVATE FINANCIAL DATA MUST NEVER BE COMMITTED (see PROJECT_PRINCIPLES.md).
+# Statements, backups and exports are ignored everywhere. The only PDFs allowed
+# in the repository are synthetic fixtures under tests/fixtures/synthetic/,
+# and scripts/check-repo-hygiene.mjs enforces this in CI.
+# ---------------------------------------------------------------------------
+*.pdf
+*.PDF
+!tests/fixtures/synthetic/**/*.pdf
+*.hhbackup
+*.hhbackup.json
+*backup*.json
+*.csv
+*.ofx
+*.qfx
+*.qif
+*.xlsx
+*.xls
+private/
+statements/
+real-data/
