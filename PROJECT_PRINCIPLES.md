@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md` (kept for history only; do not edit or develop against it).
-**Last reviewed:** 2026-10-18 (v1.0, project foundation)
+**Last reviewed:** 2026-10-19 (v1.1, financial calculations; D2 decided)
 
 ## How to use this document
 
@@ -86,6 +86,7 @@ The application must never expose one household user's data to another user of t
 - **Real statements are selected and processed only inside the finished app, in the household's own browser.** AI coding assistants (including Claude Code) must never request, upload, inspect, or receive real statements or transaction records. The app must never depend on sending real documents to Claude or any other external service. Using a third-party service for this would require the household user's explicit, informed decision, recorded in the change log.
 - Parser accuracy against real formats is checked by the household user, locally, using in-app diagnostics that never leave the browser. See `docs/ARCHITECTURE.md`, "Refining parsers without sharing statements".
 - CI must not upload screenshots, videos, or traces.
+- **Git history is permanent.** Deleting a file in a later commit does not remove it from history, forks, or clones. The hygiene check scans every path ever added in history, not just current files. If private data were ever committed, treat it as exposed: rewrite history *and* assume copies exist.
 
 ## 4. Product goal and scope
 
@@ -319,18 +320,24 @@ These definitions are the contract for every calculation. Each must be covered b
 | Only same-origin static files load | No CDN, no web fonts, relative asset paths | `e2e/network-isolation.spec.ts`, `scripts/check-build-output.mjs` |
 | Shipped CSP is strict | Meta CSP in `index.html` | `scripts/check-build-output.mjs` |
 | No console logging, network APIs, `eval`, small-value storage, or URL writes in app code | Source scan | `tests/privacy/source-guards.test.ts` |
-| No statements, backups, or exports committed | `.gitignore` plus tracked-file scan | `scripts/check-repo-hygiene.mjs` (CI) |
+| No statements, backups, or exports committed, now or in history | `.gitignore` plus a scan of tracked files and all paths ever added | `scripts/check-repo-hygiene.mjs` (CI) |
 | No source maps or data files published | Build config plus output scan | `scripts/check-build-output.mjs` |
 | No screenshots, videos, or traces from tests | Playwright config | `playwright.config.ts` |
 | Exact money arithmetic | Integer cents | `src/domain/money.test.ts` |
+| Financial definitions (§10): card purchases vs. card payments, transfers, savings, combined employment income, gifts, refunds, cash withdrawals and splits, net cash flow ≠ balance change | Pure functions in `src/domain/calculations.ts` | `src/domain/calculations.test.ts` |
+| Duplicate and overlap detection: same file, overlapping periods, multiset matching, near-matches flagged, no candidate dropped | `src/domain/dedupe.ts` | `src/domain/dedupe.test.ts` |
+| Transfer and card-payment pairing; ambiguity goes to review | `src/domain/transfers.ts` | `src/domain/transfers.test.ts` |
+| Refund linking; unmatched or ambiguous refunds are not guessed | `src/domain/refunds.ts` | `src/domain/refunds.test.ts` |
 
-Not yet implemented, so **no claims may be made about these yet:** PDF import, IndexedDB persistence, encrypted backup and restore, categorization, and the dashboard over real data.
+Tests are checked for meaningfulness by deliberately breaking a rule and confirming a test fails. This was done for card-payment exclusion, multiset dedupe, and transfer ambiguity.
+
+Not yet implemented, so **no claims may be made about these yet:** PDF import, IndexedDB persistence, the app lock, encrypted backup and restore, origin isolation in deployment, categorization, and the dashboard over real data. The calculation functions are tested, but no real data flows through them yet.
 
 ## 16. Residual risks we accept and document
 
 These remain after our mitigations. The user-facing help must describe them honestly.
 
-1. **Anyone with access to the computer account and browser profile** can open the app and see the data. IndexedDB is not encrypted by the app (see open decision D2). Mitigations: OS login, full-disk encryption, a dedicated browser profile.
+1. **Anyone with access to the computer account and browser profile** can open the app and see the data. Once the app lock (D2) is built, this applies only **while the app is unlocked**. Until then, the data is not encrypted by the app. Mitigations: auto-lock, OS login, full-disk encryption, a dedicated browser profile.
 2. **Browser extensions** with access to the page can read what it displays and stores. Mitigation: use a browser profile without extensions for this app.
 3. **Compromised code delivery.** Someone with push access to the repository could, through a stolen GitHub account or malicious dependency, publish code that reads the data and sends it elsewhere, for example by navigation, which CSP cannot fully block. A malicious deploy could also change the CSP itself. Mitigations:
    - 2FA on the GitHub account,
@@ -348,14 +355,19 @@ These remain after our mitigations. The user-facing help must describe them hone
 
 | ID | Decision | Status | Recommendation |
 |---|---|---|---|
-| D1 | **Dedicated origin.** Pick between a custom subdomain (for example `money.<your-domain>`) or a dedicated GitHub organization (`<org>.github.io`) so no other site shares this app's storage. | **Blocking** before real data | Custom subdomain if you own a domain; otherwise a dedicated free GitHub organization |
-| D2 | **App lock / at-rest encryption** of IndexedDB with a passphrase held only in memory. Protects against other people using the same computer account, but adds a passphrase per session and a lockout risk. | Open; decide before Phase 4 | Design the storage layer with an encryption seam now; decide whether to enable it once Phase 4 is scoped |
-| D3 | **Key derivation for backups.** PBKDF2-SHA-256 (built into WebCrypto, no dependency) vs. Argon2id (stronger against GPU cracking, but needs a WASM dependency). | Open; decide in Phase 4 | PBKDF2-SHA-256 at ≥ 600,000 iterations, plus a minimum passphrase strength check |
-| D4 | **PDF library.** Mozilla pdf.js (`pdfjs-dist`) is the leading candidate. It needs a security review and configuration with fonts, cMaps, and eval disabled. | Open; decide in Phase 3 | pdf.js, self-hosted, with its worker under CSP |
+| D1 | **Dedicated origin** so no other site shares this app's storage. The household does not currently own a domain. | **Blocking** before real data. Recommendation awaiting approval. | A free GitHub organization used only for this app, with Pages enabled on this repository only. See `docs/ARCHITECTURE.md` §3, plus a runtime origin guard that refuses to open the vault on any other origin. |
+| D2 | **App lock / at-rest encryption.** | **Decided 2026-10-19: required.** Design awaiting approval. | Passphrase-unlocked vault: a random data key, wrapped by an Argon2id-derived key, held in memory only while unlocked. Auto-lock on idle. See `docs/ARCHITECTURE.md` §7. |
+| D3 | **Key derivation and backup encryption.** | Recommendation awaiting approval. | Argon2id (RFC 9106) via `@noble/hashes` (pure JS, zero dependencies, no CSP change), with AES-256-GCM via WebCrypto. The same scheme is used for the app lock and for backups. See `docs/ARCHITECTURE.md` §8. |
 | D5 | **Deployment.** The Pages deploy workflow is manual-only until D1 and the release gate are satisfied. | Open | Keep manual |
 | D6 | **Offline use / service worker.** Would improve resilience, but a cached service worker can also persist a bad deploy. | Deferred | Not in v1 |
 
 ## Change log
+
+- **2026-10-19, v1.1.**
+  - D2 decided by the household user: a passphrase app lock is required, and the encryption key is never persisted alongside the data.
+  - D1 direction: no custom domain is available. Investigate a dedicated GitHub organization, with deployment manual-only until isolation is verified.
+  - D3 direction: prefer Argon2id when a reputable implementation can be integrated safely. Never implement custom cryptography.
+  - Phase 2 calculations implemented and tested (§15).
 
 - **2026-10-18, v1.0.** Created from `household-finance-product-and-security-principles.md` and the project brief. All original requirements incorporated (see the appendix). Added:
   - origin isolation (D1),

@@ -51,14 +51,56 @@ Total runtime dependencies today: **1** (`preact`). Phase 3 adds `pdfjs-dist`. A
   - Actions pinned to commit SHAs,
   - deploy is manual (`workflow_dispatch`).
 
-### Origin isolation (blocking decision D1)
+### Limits of a meta-tag CSP on GitHub Pages
 
-IndexedDB, and every other kind of browser storage, is scoped to the **origin** (scheme + host + port), not the path. `https://jmaser54.github.io/household-finance-tracker/` and `https://jmaser54.github.io/any-other-project/` are the **same origin**. Script on any of your other Pages projects could open this app's database. Two ways to fix it:
+GitHub Pages cannot send response headers, so the policy is delivered in a `<meta>` tag. Known gaps:
 
-1. **Custom subdomain** for this repository only, such as `money.example.com`, with HTTPS enforced in the Pages settings. Do not reuse a domain that hosts anything else.
-2. **Dedicated GitHub organization** (free), for example `jmaser-household`, hosting only this repository. Its Pages origin `https://jmaser-household.github.io` is then unique.
+- **Ignored in meta tags:** `frame-ancestors`, `sandbox`, and reporting (`report-uri`/`report-to`). There is no clickjacking header, and violations are not reported anywhere. Nothing is reported to us, which is fine, because we would not want reports anyway.
+- **Timing:** the policy applies only from the point where the tag is parsed. Nothing loads before it in `index.html`, and `check-build-output.mjs` rejects inline scripts.
+- **Navigation:** CSP cannot stop script from navigating the top-level page to another site with data in the URL. Only trustworthy code prevents that, so the supply-chain controls above matter.
+- **Delivery:** a malicious deploy can ship a different policy. The CSP protects against mistakes and injected content, not against whoever controls the deployed code (principles §16.3).
 
-The build uses relative paths, so it works under either option without changes.
+### Origin isolation (blocking decision D1): recommendation, awaiting approval
+
+IndexedDB, and every other kind of browser storage, is scoped to the **origin** (scheme + host + port), not the path. `https://jmaser54.github.io/household-finance-tracker/` and `https://jmaser54.github.io/any-other-project/` are the **same origin**, so script on any of your other Pages projects could open this app's database.
+
+**Recommendation:** a **free GitHub organization used only for this app**, for example `<your-choice>-household`. Transfer this repository into it, and enable Pages on this repository only. The app is then served from `https://<org>.github.io/household-finance-tracker/`, an origin that nothing else of yours shares.
+
+| Option | Isolation | Cost / effort | Verdict |
+|---|---|---|---|
+| **Dedicated GitHub organization** | Own origin, `<org>.github.io` | Free for public repositories; about 10 minutes in the GitHub web UI | **Recommended** |
+| Buy a domain and use a subdomain | Own origin | About $10–20/year, DNS setup, renewals. A lapsed domain or dangling DNS record can be taken over. | Good, but unnecessary now |
+| Second personal GitHub account | Own origin | GitHub's terms limit people to one free personal account | Rejected |
+| Rename this repository to `jmaser54.github.io` | **None**: still the same origin as your other projects | — | Rejected |
+| Run it locally (`localhost` or `file://`) | `localhost` is shared with any other local dev server; `file://` storage behaviour differs between browsers | Requires running a server; not approachable | Rejected |
+
+*Unverified facts:* the following could not be checked against GitHub's documentation from this sandbox, because docs.github.com is unreachable here. Confirm them when you create the organization.
+- Pages is free for public repositories on "GitHub Free for organizations".
+- An organization's project site URL is `https://<org>.github.io/<repo>/`.
+- Repository transfer keeps history and issues, and creates redirects.
+- `github.io` is on the Public Suffix List, so `<org>.github.io` is also a separate *site* for cookie and storage-partitioning purposes, not just a separate origin.
+
+**Trade-offs and rules that come with the organization:**
+- The repository must be **public** for free Pages. It contains only code, never data, so this is acceptable. Code review by anyone is a mild benefit.
+- **Never enable Pages on any other repository in this organization**, and never give the organization a custom domain. Any second Pages site would share the origin again. Keep yourself as the only owner, and require 2FA for the organization.
+- The organization's name appears in the app's URL.
+- After the transfer, the Claude GitHub app must be installed on the organization for future sessions to reach the repository.
+
+**Proposed steps.** You do steps 1–4 in the GitHub web UI; I do step 5.
+1. Create the organization on the Free plan.
+2. Turn on *Require two-factor authentication* in the organization settings.
+3. Transfer `jmaser54/household-finance-tracker` to the organization (Settings → Danger zone → Transfer).
+4. Install or authorize the Claude GitHub app for the organization. Set Pages → Source to **GitHub Actions**. Do not run the deploy workflow yet.
+5. I add the **runtime origin guard** with the organization's origin, plus the isolation tests below. Then you run the manual deploy and we check the live site together.
+
+**How isolation will be verified, not assumed:**
+- **Runtime origin guard.** The expected origin is fixed at build time. The app refuses to create or unlock the vault on any other origin, apart from `localhost`/`127.0.0.1` during development, where it shows a visible "development copy" banner. An e2e test serves the build on a non-matching origin and asserts the guard blocks it.
+- **Cross-origin storage test.** An e2e test writes a marker to IndexedDB on origin A (`127.0.0.1`) and asserts that a page on origin B (`localhost`) cannot see the database at all. This proves the browser behaviour we rely on, in the browser we test with.
+- **Post-deploy check (manual):**
+  - the live URL's origin is `https://<org>.github.io`;
+  - no other repository in the organization has Pages enabled;
+  - the browser network panel shows only same-origin static files and no CSP violations.
+- **Limitation:** no automated test can stop someone from enabling Pages on another repository in the organization later. That is an organizational rule, recorded here and in the release gate.
 
 ## 4. Data model (schema v1 draft)
 
@@ -120,42 +162,136 @@ Types live in `src/domain/types.ts`; the default taxonomy is in `src/domain/cate
 - You can describe the structure in your own words, or copy the masked shape summary. That lets a developer (or Claude) write a matching synthetic fixture and parser change without ever seeing the real document.
 - The final accuracy check against real statements happens in your browser, using the validation results on the review screen.
 
-## 7. Backup format (Phase 4)
+## 7. App lock / encrypted vault (D2 decided; design awaiting approval)
 
-- A single file, `household-YYYY-MM-DD.hhbackup`.
-- **Plaintext header:** format name and version, KDF and parameters (salt, iterations), cipher, and IV. The header contains no financial data, counts, or dates of transactions.
-- **Payload:** JSON with all stores plus schema version, compressed and then encrypted with AES-256-GCM. The header is bound in as additional authenticated data, so editing it makes decryption fail.
-- **Restore steps:**
-  1. Pick the file.
-  2. Enter the passphrase.
-  3. Decrypt and validate (schema, ids, referential integrity, split sums).
-  4. See a summary.
-  5. Choose "replace", with an explicit confirmation.
-  6. The restore happens in a single transaction.
-  7. Before replacing, the app offers to download an encrypted backup of the current data.
-- **Tests:** round-trip, wrong passphrase, truncated file, modified ciphertext, modified header, older-schema migration.
+The household decided (2026-10-19) that a passphrase is required to unlock locally stored financial data.
 
-## 8. Phased plan
+**Design (standard envelope encryption, no custom cryptography):**
+1. **Setup.**
+   - You choose a household passphrase.
+   - The app generates a random 256-bit **data key**, using `crypto.subtle.generateKey`.
+   - It derives a **key-encryption key** from the passphrase with Argon2id (D3), using a random 16-byte salt.
+   - It wraps (encrypts) the data key with that key, using AES-256-GCM.
+   - Only the **wrapped** data key, the salt and the KDF parameters are stored. The passphrase and the key-encryption key are never stored anywhere.
+2. **Unlock.**
+   - The app derives the key-encryption key again, in a Web Worker so the page stays responsive.
+   - It unwraps the data key into a **non-extractable** `CryptoKey` held only in memory.
+   - A wrong passphrase fails the GCM authentication check and produces a friendly "That passphrase didn't open it".
+3. **Storage.**
+   - The whole ledger is serialized to JSON, compressed, and encrypted with the data key using AES-256-GCM, with a fresh random 96-bit IV for each save.
+   - It is stored in IndexedDB as one record, alongside the previous generation for crash recovery.
+   - The format version and generation number are bound in as authenticated data, so records cannot be swapped or rolled back unnoticed.
+   - One IndexedDB transaction per save makes every save atomic.
+   - **Why one encrypted document rather than encrypting record by record:** it reveals only the total size, not how many transactions or accounts there are. It also makes atomic import commits, migrations and backups simple.
+   - **Size:** about 10k transactions per year is roughly 2–3 MB, which encrypts in milliseconds. If it ever becomes slow, we can split it into per-year segments without changing the security model.
+4. **Locking.**
+   - Triggers: a "Lock" button, and inactivity (default 15 minutes, adjustable).
+   - Locking drops every reference to the data key and the decrypted ledger, then shows the unlock screen.
+   - JavaScript cannot guarantee that memory is wiped. A non-extractable `CryptoKey` keeps the raw key away from page script.
+5. **Changing the passphrase** only re-wraps the data key. Data is not re-encrypted.
+6. **No passphrase, no data.** The data key is never stored unwrapped, never put in `localStorage` or `sessionStorage`, and never cached across reloads. Reloading the page means unlocking again.
+
+**What it protects against:**
+- Someone opening the browser while the app is locked.
+- A copy of the browser profile or disk: a stolen laptop without disk encryption, profile backups, synced profile folders.
+- Other operating-system users who can read the files.
+- Other websites. Origin isolation (D1) also covers this.
+
+**What it does NOT protect against:**
+- Anyone using the computer while the app is unlocked.
+- Malware or keyloggers on the computer.
+- Malicious browser extensions. They can read the page and capture the passphrase as it is typed.
+- A compromised deployment of the app's code, which would receive the passphrase at the next unlock.
+- Offline guessing of a **weak** passphrase.
+- Someone watching the passphrase being typed.
+- **Deletion.** Anyone can clear site data. That destroys the data rather than exposing it, so backups still matter.
+
+**Recovery limitations:**
+- A forgotten passphrase makes the local data **permanently unreadable**. There is no reset and no back door, by design.
+- The recovery path is an encrypted backup (§8) plus its passphrase.
+- The app will say this plainly at setup, and the backup reminder exists for exactly this reason.
+
+**Passphrase guidance:** the app offers to suggest a passphrase of random common words (five words from the EFF large wordlist, about 64 bits of entropy). It requires at least 12 characters, and rejects very common passwords using a small built-in list. The guidance is phrased warmly, not as a lecture.
+
+## 8. Key derivation and backups (D3): recommendation, awaiting approval
+
+**Candidates evaluated.** Timings are from Node 22 (V8, the same JavaScript engine as Chrome) on the build server. In a browser they will differ.
+
+| Implementation | Algorithm | Time (m=64 MiB, t=3) | Dependencies | CSP impact | Maintenance and assurance |
+|---|---|---|---|---|---|
+| **`@noble/hashes` 2.4.0** | Argon2id (RFC 9106) | ≈ 1.3–1.5 s | 0 | **None** (pure JS) | Actively maintained (last release Aug 2026). The library is Cure53-audited, **but its Argon2 module is explicitly outside that audit**. Passes the RFC 9106 test vector. |
+| `hash-wasm` 4.12.0 | Argon2id | ≈ 0.26 s | 0 | **Requires `'wasm-unsafe-eval'`** (loosens CSP) | Last release Nov 2024; no audit known |
+| `argon2-browser` 1.18.0 | Argon2id | — | — | Requires WASM | **Unmaintained since 2021**; rejected |
+| WebCrypto PBKDF2-SHA-256, 600k iterations | PBKDF2 | ≈ 0.1 s | Built in | None | The browser's own implementation; most mature. **Not memory-hard**, so GPU guessing is far cheaper. |
+
+**Recommendation:** **Argon2id via `@noble/hashes`**, with m = 64 MiB, t = 3, p = 1, running in a Web Worker. Encryption uses **AES-256-GCM via WebCrypto**. The same scheme serves the app lock and backups.
+
+**Why Argon2id justifies one small dependency.**
+- The realistic attack on this design is *offline guessing* against a stolen backup file or browser profile.
+- Argon2id makes each guess cost 64 MiB of memory, which cuts the guessing rate of GPUs and other specialised hardware by orders of magnitude compared with PBKDF2. This is a qualitative estimate, not measured here.
+- That margin matters most for human-chosen passphrases.
+- The dependency adds no runtime network access, no WASM, and no CSP change.
+
+**Managing the unaudited Argon2 module:**
+- Pin the exact version.
+- Unit-test against the RFC 9106 test vector.
+- Cross-check against an **independent implementation** (`hash-wasm`, installed as a *dev-only* dependency and run only in Node tests, never shipped) on many random inputs.
+- Review the module's source once and record the review in the dependency register.
+- An implementation bug would almost certainly show up as wrong output, which these tests catch, rather than as quietly weaker security. That is a judgement, not a proof.
+
+**Fallback:** if you would rather ship only audited code, use PBKDF2-SHA-256 at 600,000+ iterations. It is simpler and fully native, but weaker against offline guessing. The KDF name and parameters are stored in every file header, so we can move between KDFs, or to native WebCrypto Argon2 if browsers ship it, without breaking old files.
+
+**Backup file format.** One file, `household-YYYY-MM-DD.hhbackup`.
+- **Plaintext header:** format and version; KDF name, parameters and salt; cipher and IV. It contains no financial data, counts or dates.
+- **Payload:** the same ledger JSON as the vault plus its schema version, compressed, then encrypted with AES-256-GCM. The key is derived with Argon2id from the backup passphrase and a fresh salt for each file. The header is bound in as authenticated data, so editing it makes decryption fail.
+- **Never unencrypted.** Encryption happens before the file is offered for download. The app has no code path that writes an unencrypted export.
+- **Portability:** the format is documented, so a backup can be decrypted with standard tools (any RFC 9106 Argon2id plus AES-GCM implementation). We will include a tested reference recipe so that decryption does not depend on this app staying online.
+
+**Restore steps:**
+1. Pick the file and enter its passphrase.
+2. The app decrypts it and validates the schema, ids, referential integrity and split sums.
+3. You see a summary of what the file contains.
+4. Before anything is replaced, the app offers to save an encrypted backup of the current data.
+5. You explicitly confirm "replace".
+6. The replacement happens in a single transaction, or not at all.
+
+**Tests (Phase 4):**
+- vault set up, lock and unlock;
+- wrong passphrase;
+- tampered ciphertext, IV, header or generation number;
+- rollback to an older generation;
+- passphrase change;
+- KDF-parameter round-trip;
+- backup round-trip;
+- wrong backup passphrase;
+- truncated or corrupted file;
+- older-schema migration;
+- a restore that fails part-way leaves existing data intact;
+- the decrypted ledger and keys never reach logs, URLs or network (the existing guards plus e2e network capture during unlock and backup);
+- the data key is non-extractable.
+
+## 9. Phased plan
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **1. Foundation** *(this change)* | Principles, architecture, scaffold, CSP, privacy guard tests, money utilities, draft types and taxonomy, welcoming landing page with an illustrative preview | Typecheck, unit tests, hygiene check, build, build scan, and browser network tests all pass |
-| **2. Model and calculations** | Finalize schema v1; pure functions for recognition, net cash flow, transfer matching, refund linking, splits, multiset dedupe, catch-all share metric | Tests for every definition in principles §10 and the cases in §14 |
+| **2. Model and calculations** *(done)* | Pure functions for recognition, net cash flow, transfer matching, refund linking, splits, multiset dedupe, catch-all share metric (`src/domain/`) | Tests for every definition in principles §10; mutation-checked |
 | **3. Import** | pdf.js integration and review; parser interface; scanned-PDF detection; 2–3 synthetic layouts generated in tests; staging and review UI; local diagnostics | Malformed, scanned, overlap, re-import, and validation-failure tests; no network access during parsing |
-| **4. Persistence and backups** | IndexedDB wrapper and migrations; atomic commit and undo; encrypted backup and restore; persistent-storage request; decide D2 and D3 | Backup round-trip, tamper, and wrong-passphrase tests; restore never leaves partial data |
+| **4. Vault and backups** | After D1–D3 approval: origin guard; encrypted vault (§7); Argon2id worker; atomic commit and undo; encrypted backup and restore (§8); persistent-storage request | Backup round-trip, tamper, and wrong-passphrase tests; restore never leaves partial data |
 | **5. Dashboard** | Overview (in/out/kept), spending by category, incoming-money section, period comparison, drilldowns, review queue, catch-all quality nudge, backup reminder | Totals traceable to transactions; tests for calculations shown |
 | **6. Validation and release** | Accessibility pass, end-to-end flow on synthetic data, release gate | Release gate below passes; D1 resolved |
 
-## 9. Dependency register
+## 10. Dependency register
 
 | Package | Runtime? | Touches financial data? | Network behaviour | Notes |
 |---|---|---|---|---|
 | preact 10.29.8 | Yes | Renders it | None | Zero dependencies |
 | vite, vitest, typescript, @playwright/test, @types/node | Dev only | Synthetic data only | Not shipped | Never included in `dist/` |
 
-## 10. Release gate (before real data is used)
+## 11. Release gate (before real data is used)
 
-- [ ] D1 resolved: the app is served from an origin that hosts nothing else, over HTTPS.
+- [ ] D1 resolved: the app is served from an origin that hosts nothing else, over HTTPS. The runtime origin guard is configured for it, and no other repository in the organization has Pages enabled.
+- [ ] The app lock is implemented and its tests pass (§7).
 - [ ] GitHub account has 2FA; `main` is branch-protected; deploys are manual.
 - [ ] `npm run verify` passes on the release commit.
 - [ ] The deployed site was loaded with devtools open: only its own static files were requested, and no CSP violations or console output appeared.

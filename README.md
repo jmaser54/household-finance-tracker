@@ -2,7 +2,7 @@
 
 A private, local-first household spending and income tracker. You import PDF bank and credit-card statements, and they are read **in your browser, on your computer**. The ledger stays in that browser. There is no server, no account, no bank connection, and no analytics.
 
-> **Status: foundation (Phase 1).** Statement import, storage, backups and the real dashboard are not built yet. Do not use with real data until the release gate in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#10-release-gate-before-real-data-is-used) passes.
+> **Status: foundation (Phase 1).** Statement import, storage, backups and the real dashboard are not built yet. Do not use with real data until the release gate in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#11-release-gate-before-real-data-is-used) passes.
 
 - **Source of truth:** [`PROJECT_PRINCIPLES.md`](PROJECT_PRINCIPLES.md). Read it before changing anything that touches data, storage, security or calculations.
 - **Technical plan:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
