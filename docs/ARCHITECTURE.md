@@ -226,6 +226,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
    - Options: no `eval`, no font loading, no streaming, logging limited to errors.
    - The legacy build is used because the modern build calls JavaScript features (such as `Promise.try`) that Safari 17 on macOS Monterey lacks. The legacy build carries its own polyfills.
    - Limits: 25 MB and 60 pages per file.
+   - **WebKit finding (Phase D CI):** pdf.js's own `getTextContent()` loops over a stream with `for await`. Safari's WebKit doesn't support that, and the legacy build doesn't polyfill it, so text is read through an explicit stream reader instead. A test simulates the missing feature so this can't regress.
 3. Checks before reading: not a PDF, damaged, or password-protected files are reported as such. Fewer than 25 characters of text per page means **scanned / image-only**, which is explained and not guessed at (no OCR).
 4. **Parsers** (`parsers/registry.ts`): each registered parser reads the text and the best-scoring result wins. Today there is one, `generic-table` (`parsers/generic.ts`), a general reader for the common layout of a table where rows start with a date and end with amounts:
    - **Statement details:** the period (several common wordings and date formats), opening and closing balances, account type, and the last four digits of the account number. Nothing more of the number is kept.

@@ -115,3 +115,18 @@ describe('masked diagnostics never reveal values', () => {
     for (const secret of ['4821', '2,500.00', 'PAYROLL', 'GROCER', '03/01', 'EXAMPLE']) expect(text).not.toContain(secret);
   });
 });
+
+describe('works without features Safari lacks', () => {
+  it('reads a statement when streams are not async-iterable (as in Safari / the Mac app window)', async () => {
+    const proto = ReadableStream.prototype as unknown as Record<symbol, unknown>;
+    const original = proto[Symbol.asyncIterator];
+    proto[Symbol.asyncIterator] = undefined;
+    try {
+      const s = await parsed('savings-2026-03.pdf');
+      expect(s.transactions).toHaveLength(2);
+      expect(s.validation.status).toBe('verified');
+    } finally {
+      proto[Symbol.asyncIterator] = original;
+    }
+  });
+});

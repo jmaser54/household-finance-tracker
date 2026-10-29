@@ -43,7 +43,10 @@ export interface PdfJs {
 }
 interface PdfDocument {
   numPages: number;
-  getPage(n: number): Promise<{ getTextContent(): Promise<{ items: unknown[] }> }>;
+  getPage(n: number): Promise<PdfPage>;
+}
+interface PdfPage {
+  streamTextContent(): ReadableStream<{ items: unknown[] }>;
 }
 interface PdfTextItem {
   str: string;
@@ -77,7 +80,6 @@ export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfT
   try {
     doc = await task.promise;
   } catch (error) {
-    (globalThis as Record<string, unknown>).__TEMP_PDF_DIAG = `open: ${String((error as Error)?.name)}: ${String((error as Error)?.message).slice(0, 200)}`;
     const name = (error as { name?: string } | null)?.name;
     throw new PdfReadError(name === 'PasswordException' ? 'password_protected' : 'unreadable');
   }
@@ -86,8 +88,8 @@ export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfT
     const lines: TextLine[] = [];
     let characterCount = 0;
     for (let n = 1; n <= doc.numPages; n++) {
-      const content = await (await doc.getPage(n)).getTextContent();
-      const pieces = (content.items as PdfTextItem[])
+      const items = await readTextItems(await doc.getPage(n));
+      const pieces = (items as PdfTextItem[])
         .filter((item) => typeof item.str === 'string' && item.str.trim() !== '' && Array.isArray(item.transform))
         .map((item) => ({ text: item.str.trim(), x0: item.transform[4]!, x1: item.transform[4]! + item.width, y: item.transform[5]! }));
       for (const piece of pieces) characterCount += piece.text.replace(/\s/g, '').length;
@@ -95,13 +97,33 @@ export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfT
     }
     return { pageCount: doc.numPages, lines, characterCount };
   } catch (error) {
-    (globalThis as Record<string, unknown>).__TEMP_PDF_DIAG = `read: ${String((error as Error)?.name)}: ${String((error as Error)?.message).slice(0, 200)}`;
     if (error instanceof PdfReadError) throw error;
     throw new PdfReadError('unreadable');
   } finally {
     // Releases the document and its worker resources.
     await task.destroy().catch(() => undefined);
   }
+}
+
+/**
+ * Reads a page's text stream with an explicit reader. pdf.js's own
+ * getTextContent() uses `for await` over a ReadableStream, which Safari's
+ * WebKit (including Safari 17 on macOS Monterey, and the Mac app's window)
+ * does not support; this loop works everywhere.
+ */
+async function readTextItems(page: PdfPage): Promise<unknown[]> {
+  const reader = page.streamTextContent().getReader();
+  const items: unknown[] = [];
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value && Array.isArray(value.items)) items.push(...value.items);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return items;
 }
 
 export function looksScanned(text: PdfText): boolean {
