@@ -29,11 +29,12 @@ for ARCH in arm64 x86_64; do
   echo "== $ARCH"
   arch "-$ARCH" "$BIN" >"$OUT" 2>&1 &
   PID=$!
-  for _ in $(seq 1 75); do
+  for _ in $(seq 1 180); do
     kill -0 "$PID" 2>/dev/null || break
     sleep 1
   done
-  if kill -0 "$PID" 2>/dev/null; then kill "$PID" || true; echo "(still running after 75 s; stopped)"; fi
+  if kill -0 "$PID" 2>/dev/null; then kill "$PID" || true; echo "(still running after 180 s; stopped)"; fi
+  echo "($ARCH run took $SECONDS s since the script started)"
   grep '^SMOKE ' "$OUT" || echo "(no SMOKE output)"
   expect() { grep -Eq "$1" "$OUT" || { echo "FAIL [$ARCH]: $2" >&2; ok=false; }; }
   expect '^SMOKE page-loaded tauri://localhost$' "the bundled page did not load inside the sandbox"
@@ -59,6 +60,7 @@ for ARCH in arm64 x86_64; do
   expect '^SMOKE probe fetch-blocked$' "the page was able to send a request to an outside site"
   expect '^SMOKE navigation refused https://example.com$' "navigation to an outside site was not refused"
   expect '^SMOKE probe done$' "the in-window checks did not finish"
+  grep -q '^SMOKE timeout$' "$OUT" && { echo "FAIL [$ARCH]: the checks ran out of time" >&2; ok=false; }
 done
 test -d "$CONTAINER" || { echo "FAIL: no sandbox container was created" >&2; ok=false; }
 [ "$ok" = true ] || exit 1

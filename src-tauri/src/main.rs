@@ -185,12 +185,14 @@ mod smoke {
         eprintln!("SMOKE {message}");
     }
 
-    /// Marks startup and ends the run after 45 s if the checks never finish,
-    /// so CI always gets output instead of a hang.
+    /// Marks startup and ends the run after 150 s if the checks never finish,
+    /// so CI always gets output instead of a hang. The probe performs about a
+    /// dozen scrypt operations; under Rosetta, opening files whose cost was
+    /// calibrated on the native Apple Silicon run takes several seconds each.
     pub fn start<R: Runtime>(app: AppHandle<R>) {
         note("setup");
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(45));
+            std::thread::sleep(Duration::from_secs(150));
             note("timeout");
             app.exit(2);
         });
