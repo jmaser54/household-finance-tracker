@@ -1,16 +1,21 @@
 # Project Principles — Household Finance Tracker
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
-**Supersedes:** `docs/reference/household-finance-product-and-security-principles.md` (kept for history only; do not edit or develop against it).
-**Last reviewed:** 2026-10-19 (v1.1, financial calculations; D2 decided)
+**Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
+**Last reviewed:** 2026-10-29 (v2.0: standalone Mac app)
 
 ## How to use this document
 
-- Read the relevant sections **before** implementing anything that touches privacy, data storage, security, imports, backups, or financial calculations.
-- When requirements change, change them **here** and record the change in the [change log](#change-log). There is exactly one principles document. Do not create competing copies.
-- Precedence: **§1 privacy overrides everything else.** Next come financial correctness (§10–§12), then approachability (§5). Feature count comes last.
-- "Must" and "never" are non-negotiable. Weakening one requires the household user's explicit approval, recorded in the change log. Silent reinterpretation is not allowed.
-- If a requirement cannot be met, stop and say so. Do not ship a weaker version that looks like it meets the requirement.
+- Read the relevant sections **before** implementing anything that touches privacy, storage, security, imports, backups, or financial calculations.
+- When requirements change, change them **here** and record the change in the [change log](#change-log). There is exactly one principles document.
+- **Precedence:**
+  1. §1 privacy overrides everything.
+  2. Financial correctness (§10–§12).
+  3. Dependability (§8).
+  4. Approachability (§5).
+  5. Feature count comes last.
+- "Must" and "never" are non-negotiable. Weakening one requires the household user's explicit approval, recorded in the change log.
+- If a requirement cannot be met or verified, stop and say so. Do not ship a weaker version that looks like it meets the requirement.
 
 ---
 
@@ -20,95 +25,117 @@
 >
 > **If we cannot implement a reasonable, defensible security architecture, do not ship the application.**
 
-This applies to every artifact the project produces: the running app, its storage, backups, the source repository, CI, logs, test fixtures, screenshots, and conversations with AI coding tools.
-
-The application must never expose one household user's data to another user of the app. Each browser origin holds only its own household's data, and nothing is shared.
+This applies to everything the project produces: the running app, its data files, backups, the source repository, CI, logs, test fixtures, screenshots, and conversations with AI coding tools. Each installation holds only its own household's data. Nothing is shared between installations.
 
 ## 2. Honesty about security
 
-- Our job is to **minimize** risk and **document what remains**. No application can promise a zero percent chance of compromise, and we never claim one.
-- Make only claims that are true of the implementation **and have been verified**, for example by a test or an inspected network log. Acceptable: "Statements are read on this computer and are not uploaded by this app." Not acceptable: "Bank-level security", "100% secure", "unhackable", "your data can never leak".
-- Browser storage is **not** automatically encrypted storage. Never describe it as encrypted, private from other people using the same computer account, or permanent.
-- Never call a backup encrypted unless encryption is implemented, tested (including wrong-passphrase and tamper tests), and actually applied to that file.
-- Known residual risks are listed in [§16](#16-residual-risks-we-accept-and-document) and must be kept current.
+- Our job is to **minimize** risk and **document what remains**. No application can promise zero risk, and we never claim one.
+- **Only make verified claims.** A claim must be true of the implementation **and verified**, for example by a test, an inspected configuration, or a firewall log.
+  - Acceptable: "This app has no network permission, and statements are read on this Mac."
+  - Not acceptable: "bank-level security", "100% secure", "unhackable".
+- **A passing test is not a security audit.** That includes test vectors and interoperability tests. Say which assurance a component actually has.
+- Never call data or a backup encrypted unless encryption is implemented, applied to that file, and tested, including wrong-passphrase and tamper tests.
+- Residual risks are listed in [§16](#16-residual-risks) and must be kept current.
 
 ## 3. Privacy and security requirements
 
 ### 3.1 Architecture boundary
 
-- **Local-first.** Statements are processed on the user's device, in the browser. The household ledger is stored in that browser's local database (IndexedDB).
-- **GitHub Pages hosts application code only.** It is never a store for financial data, in any form.
-- **No backend.** No backend, login service, cloud synchronization, server-side processing, or third-party data processing without the household user's **explicit approval** recorded in the change log.
-- **No bank connections.** No connections to banks or financial aggregators. Bank login credentials are never requested or stored.
-- **No data leaves the device.** Statements, transaction data, descriptions, balances, account details, categories, and financial summaries are never transmitted to any server or third-party service. This includes:
-  - remote AI APIs,
-  - external OCR,
-  - analytics and telemetry,
-  - error-reporting services,
-  - CDNs that receive data,
-  - web fonts or other remote resources that reveal app usage.
-- **Network isolation is enforced, not just intended.** The shipped page carries a Content-Security-Policy with `connect-src 'none'` and `default-src 'none'`, plus `no-referrer`. Automated tests verify the built app makes no requests except for its own static files, and that the policy blocks outbound connections.
-- **Origin isolation is required before real data is imported.** Browsers isolate IndexedDB per *origin*. All GitHub Pages project sites under one account share one origin (`https://<user>.github.io`), so any other project hosted there could read this app's data. The app must run on an origin that hosts nothing else, such as a dedicated custom subdomain or a dedicated GitHub organization. See [§17](#17-open-decisions).
+- **A standalone macOS desktop app** (Tauri). Statements are read, and all records, calculations and results are produced and stored, **on the household's Mac**.
+- **No network requests during normal use.**
+  - No bank connections, no aggregators.
+  - No accounts or logins.
+  - No cloud storage or sync.
+  - No backend.
+  - No external APIs, including AI APIs and external OCR.
+  - No analytics, telemetry, crash or error reporting.
+  - No remote fonts, scripts, or update checks.
+- Adding any network capability requires the household user's explicit approval, recorded in the change log. This includes auto-updates.
+- **Least privilege.** The app has only the permissions it needs:
+  - macOS App Sandbox **without** network entitlements;
+  - access only to files the user picks plus the app's own data folder;
+  - a minimal Tauri capability list.
+
+  See `docs/ARCHITECTURE.md` §4.
+- **Enforced and verified, not just intended.** Network isolation is enforced in layers:
+  - OS sandbox entitlements;
+  - Content-Security-Policy in the app window;
+  - navigation blocked to anything outside the app;
+  - no networking code or crates.
+
+  Each layer is checked by automated tests and a manual firewall test (`docs/ARCHITECTURE.md` §11).
+- Bank login credentials are never requested or stored.
 
 ### 3.2 Data handling inside the app
 
-- **Never** include financial data in:
-  - error messages that are sent anywhere,
+- **Never** put financial data in:
+  - error messages,
   - console output,
-  - URLs (path, query, or hash),
-  - page titles,
-  - browser history,
-  - analytics,
-  - diagnostic logs.
-- The app has no logging or error-reporting pipeline at all. Unexpected errors show a generic message on screen.
-- Small key/value storage (`localStorage`, `sessionStorage`, cookies) is not used for financial data.
-- Only the **last four digits** of an account number may be stored, and only to match statements to accounts. Full account numbers are discarded after parsing.
-- Original PDF files are **not** stored in the app. Only a SHA-256 fingerprint is kept, to detect repeat imports.
+  - log files,
+  - window titles,
+  - file names chosen by the app,
+  - URLs,
+  - crash reports.
+
+  The app has no logging or reporting pipeline. Errors are shown on screen as plain-language messages that contain no data.
+- Only the **last four digits** of an account number may be stored, and only to match statements to accounts.
+- Original PDFs are **not** stored. Only a SHA-256 fingerprint is kept, to detect repeat imports.
+- Decrypted data exists only in the app's memory while it is unlocked.
 
 ### 3.3 Dependencies and supply chain
 
-- Minimize dependencies and external scripts. No third-party scripts are loaded at runtime from any CDN: everything ships from the app's own origin.
-- Any dependency that can read imported files or transaction data (for example the PDF parser) needs an explicit review. Record its purpose, version, and network behaviour in `docs/ARCHITECTURE.md`.
-- Pin exact versions with a lockfile, and install with `npm ci`. Install scripts are disabled by default (`.npmrc`). Pin GitHub Actions to commit SHAs.
-- Prefer mature releases over brand-new ones for anything that touches data.
+- Minimize dependencies. Nothing is loaded from the internet at runtime: everything ships inside the app.
+- Every dependency that can read statements, transactions or keys (PDF parser, encryption library) is reviewed and recorded in `docs/ARCHITECTURE.md` §13. The record covers its purpose, version, and assurance level.
+- Pin exact versions. Use `package-lock.json` and `npm ci` with install scripts disabled, and commit `Cargo.lock`. Check Rust crates against the RustSec advisory database in CI. Pin GitHub Actions to commit SHAs.
+- Prefer mature releases for anything that touches data.
 
 ### 3.4 Source control, CI, and AI tooling
 
-- **Never** put any of the following into GitHub, source control, CI logs, test snapshots, screenshots, or test artifacts:
+- **Never** put any of the following into GitHub, source control, Git history, CI logs, test fixtures, screenshots, build artifacts, or uploaded artifacts:
   - statements (including redacted ones),
-  - transaction data,
+  - transactions,
   - merchant histories,
   - account numbers,
-  - backups or exports,
-  - credentials or passphrases,
-  - any other private household information.
-- Only **synthetic** fixtures, generated by scripts in this repository, may be used for development, automated tests, and CI. Merchant descriptions and transaction patterns are themselves sensitive. Avoid redacted real samples in the repository.
-- **Real statements are selected and processed only inside the finished app, in the household's own browser.** AI coding assistants (including Claude Code) must never request, upload, inspect, or receive real statements or transaction records. The app must never depend on sending real documents to Claude or any other external service. Using a third-party service for this would require the household user's explicit, informed decision, recorded in the change log.
-- Parser accuracy against real formats is checked by the household user, locally, using in-app diagnostics that never leave the browser. See `docs/ARCHITECTURE.md`, "Refining parsers without sharing statements".
-- CI must not upload screenshots, videos, or traces.
-- **Git history is permanent.** Deleting a file in a later commit does not remove it from history, forks, or clones. The hygiene check scans every path ever added in history, not just current files. If private data were ever committed, treat it as exposed: rewrite history *and* assume copies exist.
+  - data files or backups,
+  - passphrases or other secrets,
+  - any private household information.
+- Only **synthetic** fixtures generated by scripts in this repository may be used for development, tests, and CI.
+- **Real statements are opened only in the finished app on the household's Mac.**
+  - AI coding assistants (including Claude Code) must never request, upload, inspect, or receive real statements, transactions, data files, or backups.
+  - The app must never depend on sending documents to any external service.
+- Parser accuracy against real formats is checked locally by the household user, with in-app diagnostics that show only masked structure (`docs/ARCHITECTURE.md` §10).
+- CI uploads only the built app (code, no data). It never uploads screenshots, videos, or traces.
+- **Git history is permanent.** Deleting a file later does not remove it from history, forks, or clones. The hygiene check scans every path ever added. If private data were ever committed, treat it as exposed.
 
 ## 4. Product goal and scope
 
-Build a household **spending and income tracker** for a married couple who treat their finances as fully joint, even though they hold separate accounts. The initial target is one household, one computer, and one browser.
+A household **spending and income tracker** for a married couple with separate accounts and fully joint finances. **Current focus: this household, on one Mac.**
 
-- Keep the architecture adaptable for future sharing and future households. Do **not** build multi-user accounts, a financial-data backend, or cloud sync now.
-- Future households must be able to set up their own historical baseline and keep it current through regular imports. Account names, owners, and categories are **settings**, never hardcoded personal details.
-- **Not in scope for the initial version:**
+- **Not now:**
+  - Windows or Linux builds,
+  - public distribution or a download website,
+  - paid code signing,
+  - auto-updates,
+  - multi-user accounts,
+  - sync.
+- Keep the code adaptable: account names, owners and categories are **settings**, never hardcoded personal details.
+- **Not in scope:**
   - investments,
   - bill payment,
   - bank linking,
   - debt-payoff planning,
   - mandatory budgets.
-- Monthly budgets may be considered later. They must never be required.
+
+  Monthly budgets may be considered later. They must never be required.
 - **PDF statements only** in the first version.
+- Avoid overengineering. The goal is a simple, dependable local program.
 
 ## 5. User experience and visual direction
 
 - Optimize for clarity, confidence, and approachability over feature count.
 - **Tone:** warm, friendly, patient, and lightly playful, inspired by the welcoming, cartoonish feel of early-1990s *Backyard Baseball*.
   - Do not copy the game.
-  - Do not make the interface childish, patronizing, cluttered, or gimmicky.
+  - Never make it childish, patronizing, cluttered, or gimmicky.
   - Never sacrifice clarity or accuracy for decoration.
 - It should feel like a friendly place to explore our finances, not accounting software.
 - **Avoid:**
@@ -119,25 +146,26 @@ Build a household **spending and income tracker** for a married couple who treat
   - dense or numerous charts,
   - accounting jargon,
   - complicated setup.
-- **Initial screen:**
-  - a clear upload area for statement PDFs,
-  - a small, attractive preview of the dashboard, built from fictional data that is clearly labelled as illustrative,
-  - minimal explanatory text.
-- **No** marketing homepage, lengthy onboarding, product tour, demo workflow, or unnecessary terms-of-service page.
-- After importing and confirming statements, take the user **directly to the updated dashboard**.
+- **First screen after unlocking:**
+  - a clear area for adding statement PDFs,
+  - a small preview of the dashboard built from fictional data, clearly labelled as illustrative,
+  - minimal text.
+
+  No marketing pages, product tour, or lengthy onboarding.
+- After confirming an import, go **directly to the updated dashboard**.
 - Use progressive disclosure: a simple overview first, with deeper detail through simple drilldowns.
 - **Always make these obvious:**
   - what has been imported,
   - what needs review,
-  - whether an import succeeded,
+  - whether an import or save succeeded,
   - when data was last backed up.
 - Backup reminders should be useful but unobtrusive.
 - Summary figures are rounded to whole dollars. Exact cents appear in transaction lists and review screens.
 
 ## 6. Setup and ongoing imports
 
-- **Initial setup:** about six months of historical statements establish history, recurring transactions, merchant mappings, and initial rules. For this household that means five accounts (Julia's checking, Julia's credit card, Jeff's checking, Jeff's savings, Jeff's credit card) × six months, or about 30 PDFs. These are examples of user-entered settings, not hardcoded values.
-- **Ongoing:** upload the previous month's statements. If months were missed, multiple months can be uploaded at once.
+- **Initial setup:** about six months of historical statements. For this household that means five accounts (Julia's checking, Julia's credit card, Jeff's checking, Jeff's savings, Jeff's credit card), or about 30 PDFs. These are user-entered settings, not hardcoded values.
+- **Ongoing:** add the previous month's statements. Several months can be added at once if some were missed.
 - **Every import must:**
   - preserve existing history, user corrections, and rules,
   - detect overlapping statement periods,
@@ -145,87 +173,93 @@ Build a household **spending and income tracker** for a married couple who treat
 
 ## 7. Statement import and PDF parsing
 
-- Parse PDFs **in the browser only**. Never transmit PDFs for extraction or OCR.
+- PDFs are parsed **inside the app only**. They are never sent anywhere for extraction or OCR.
 - Detect text-based PDFs. Identify scanned or image-only PDFs and explain clearly that they are not supported yet. Never guess or claim success.
-- Use **modular parsers** per statement layout (institution and format), behind a common interface. Never hardcode one bank's format throughout the app.
-- Extract, where available:
+- Use **modular parsers** per statement layout, behind a common interface. Never hardcode one bank's format throughout the app.
+- **Extract, where available:**
   - transaction and posted dates,
   - descriptions,
   - amounts,
   - transaction types,
-  - account identity (last four digits),
+  - last four digits of the account,
   - statement period,
-  - opening and closing balances or summary totals.
+  - balances or summary totals.
 - **Preserve the original description** exactly as printed, alongside the normalized merchant name.
-- Validate extracted transaction counts, statement totals, and balances when the statement provides them. Show the result.
+- Validate counts, totals and balances when the statement provides them, and show the result.
 - Flag uncertain extraction, unsupported layouts, unreadable PDFs, and missing data.
-- **Never silently omit transactions or invent data.**
-- **Always show a review screen before committing.** Importing (staging) is separate from confirming and saving. A failed or cancelled import must not change the existing ledger. Confirmation is applied atomically.
-- Detect duplicate transactions and overlapping statement periods, and recognise when the same PDF is imported again.
-- Keep imports reversible where practical, and show clearly what will be added or changed.
-- We do not assume every PDF can be parsed perfectly.
+- **Never silently omit transactions or invent data.** Ambiguous or missing values are flagged, not guessed.
+- **Always show a review screen before saving.** Importing is separate from confirming and saving. A failed or cancelled import must not change saved data. Confirmation is saved atomically.
+- Detect duplicates, overlapping periods, and the same PDF imported again.
+- Keep imports reversible where practical.
 
-## 8. Storage, backup, and recovery
+## 8. Storage, saving, backup, and recovery
 
-- The ledger lives in **IndexedDB**. Browser storage is tied to one device, browser, and origin, and it **can be deleted** (by clearing site data, browser storage eviction, a profile reset, or a new computer).
-- **IndexedDB is not a backup.** Explain this clearly to the user, and request persistent storage where the browser supports it.
-- **Backups must include:**
-  - the complete financial dataset,
-  - accounts and settings,
-  - categories,
-  - merchant mappings and rules,
-  - user corrections, splits, and annotations,
-  - schema and version information.
-- **Backups are encrypted locally** with a user-chosen passphrase. The same holds for decryption. The passphrase is **never** stored in the app, in browser storage, or alongside the backup. A forgotten passphrase means the backup cannot be recovered. The UI says so plainly.
-- If encrypted backup cannot be implemented safely, explain the trade-off. Never present a plain file as encrypted.
-- **Restore safely:**
-  1. Validate a backup (integrity, format, schema version, internal consistency) **before** restoring.
-  2. Show what it contains.
-  3. Warn clearly before replacing existing data.
-  4. Never overwrite existing data by accident.
-  5. Restore atomically, or leave the existing data untouched.
-- Moving to a new computer or browser means making a backup, then restoring it on the new machine. This path must be practical and tested.
-- No automatic cross-device synchronization in version one.
+- **Encrypted at rest.** The household's data is stored on the Mac in the app's data folder, encrypted with a key protected by the **household passphrase**.
+  - The passphrase and any key derived from it are **never** stored. They exist only in memory while the app is unlocked.
+  - The app locks on request, after inactivity, and on quit.
+- **Save safely.** Every save is atomic: either the new data is fully written or the previous data remains intact. The previous good version is kept.
+  - Interrupted saves (crash, power loss, full disk) must never corrupt or lose saved data.
+  - If saved data cannot be read, the app says so plainly and **never** silently starts over with empty data.
+  - Only one copy of the app may write the data at a time.
+- **Detect and handle errors.** Every failure is shown in plain language with a safe next step, and no data is lost.
+- **Backups must:**
+  - be **encrypted before they leave the app**, with a passphrase the user types when making the backup;
+  - be saved where the user chooses;
+  - include the complete dataset:
+    - accounts,
+    - settings,
+    - categories,
+    - rules,
+    - corrections,
+    - splits,
+    - notes,
+    - schema version.
+
+  The app has no code path that writes an unencrypted export.
+- **Backups are straightforward to make and restore.**
+  - Restoring validates the backup before replacing anything (integrity, format, schema version, internal consistency).
+  - It shows what the backup contains, and requires confirmation.
+  - It keeps an encrypted copy of the data it replaces.
+  - It completes fully or leaves current data untouched.
+- **Recovery limits are stated plainly.** A forgotten passphrase makes that data or backup permanently unreadable, with no reset and no back door. Backups are the protection against losing the Mac, the data folder, or the passphrase.
+- Moving to a new Mac means installing the app and restoring a backup. This path is tested.
+- No automatic sync.
 
 ## 9. Household and account model
 
 - One household with multiple accounts. Reports treat all accounts as one joint household.
-- Retain account identity internally on every transaction, so transfers and duplicates can be identified reliably.
-- Initial account kinds: checking, savings, and credit card.
-- Account names and owners are settings.
+- Every transaction keeps its account identity, so transfers and duplicates can be identified.
+- Account kinds: checking, savings, and credit card. Names and owners are settings.
 
 ## 10. Financial definitions
 
-These definitions are the contract for every calculation. Each must be covered by automated tests.
+These are the contract for every calculation. Each is covered by automated tests (§15).
 
 1. **Spending is based on purchases and charges**, not on money moving between accounts.
 2. **Credit-card purchases count as spending when charged.**
-3. **Credit-card payments are not spending.** This covers a payment from checking and the matching credit on the card. Both are transfers or payments.
-4. **Transfers between our own accounts are neither income nor expenses.** This covers checking ↔ savings, checking ↔ checking, and so on.
-5. **Moving money into savings is not spending.**
-6. **Employment income from both spouses is one category,** Employment Income.
-7. **Family gifts are tracked separately** from employment income.
-8. **Refunds** reduce their original expense category when the original purchase can be identified. Otherwise, flag them for review. Never automatically inflate ordinary income.
-9. **Cash withdrawals** may be classified as *Cash / Untracked Cash Spending*. The user is never required to explain them. Optionally, the user may annotate or reclassify a withdrawal (for example, as a cash gift), or split it across categories. The data model supports splits from the start.
-10. **Actual net cash flow = recognized income − recognized expenses**, excluding internal transfers and card payments.
-11. **Net cash flow is not the change in a checking-account balance,** and the UI never conflates the two.
-12. Transfers stay visible as their own transaction type where useful, but they are excluded from income and expense totals.
-13. **Never double-count** transactions that appear in overlapping statements or on both sides of a transfer.
-14. **Money is exact.** All arithmetic uses integer cents. Rounding happens only for display.
+3. **Credit-card payments are not spending.** This covers the payment from checking and the matching credit on the card.
+4. **Transfers between our own accounts** are neither income nor expenses.
+5. **Moving money into savings** is not spending.
+6. **Employment income from both spouses** is one category: Employment Income.
+7. **Family gifts** are tracked separately from employment income.
+8. **Refunds** reduce their original expense category when the original purchase can be identified. Otherwise they are flagged for review. They never automatically inflate ordinary income.
+9. **Cash withdrawals** may be classified as *Cash / Untracked Cash Spending* without explanation. The user can optionally annotate a withdrawal, reclassify it, or split it across categories.
+10. **Actual net cash flow = recognized income − recognized expenses**, excluding transfers and card payments.
+11. **Net cash flow is not the change in a checking balance,** and the UI never conflates the two.
+12. Transfers stay visible as their own type but are excluded from income and expense totals.
+13. **Never double-count** transactions from overlapping statements or from both sides of a transfer.
+14. **Money is exact:** integer cents, with rounding only for display.
 
 ## 11. Categorization
 
-- **Taxonomy:**
-  - Start with a familiar spending taxonomy inspired by common consumer-finance tools, then tailor it to the household's real transactions, inside the app.
-  - Use a small number of useful top-level categories. Subcategories are optional and one level deep.
-  - **Childcare & School** is a prominent, independent category, never buried in Other.
-- **Income is kept separate** from spending. The initial income categories are:
+- Use a familiar taxonomy with a small number of top-level categories and optional one-level subcategories. **Childcare & School** is a prominent, independent category.
+- Income is separate from spending. The income categories are:
   - Employment Income,
   - Family Gifts,
   - Refunds & Reimbursements,
-  - Interest & Investment Income (when present),
+  - Interest & Investment Income,
   - Other Income.
-- **No simplistic rules.** A deposit from a company is not automatically employment income. A person's name or shared surname does not automatically mean a family gift.
+- **No simplistic rules.** A company deposit is not automatically employment income, and a person's name is not automatically a family gift.
 - **Evidence** comes from:
   - description,
   - direction,
@@ -234,149 +268,141 @@ These definitions are the contract for every calculation. Each must be covered b
   - dates,
   - account,
   - statement context,
-  - prior user corrections.
+  - prior corrections.
 
-  Every automatic classification carries a confidence score and plain-language reasons. Uncertain transactions are flagged for review.
-- **Learning from corrections:**
-  - Corrections create editable merchant and transaction rules.
-  - User corrections are **never silently overwritten** by future imports.
-  - Users can rename and merge merchants, change categories, and split transactions.
-- **Catch-all categories:** Other and Uncategorized remain available. If a large share of spending or income lands there, the app surfaces it as a **categorization-quality problem** to fix, not as an acceptable permanent outcome.
-- Categorization is validated against real examples **inside the local app**, never by sending the ledger to an AI service.
+  Every automatic classification carries a confidence score and plain-language reasons, and uncertain ones are flagged.
+- **Corrections** become editable rules and are **never silently overwritten** by later imports. Users can rename and merge merchants, change categories, and split transactions.
+- **Catch-all categories:** Other and Uncategorized remain available. A large share landing there is surfaced as a quality problem to fix.
+- Categorization is tuned against real examples **inside the app on the Mac**, never by sending data to an AI service.
 
 ## 12. Import quality and auditability
 
-- Every dashboard total must be traceable to its underlying transactions.
-- Original statement descriptions are preserved alongside normalized merchant names.
-- Statement validation results (date range, counts, balances) are stored with each imported statement and stay visible.
+- Every dashboard total is traceable to its transactions.
+- Original descriptions are preserved alongside normalized merchants.
+- Statement validation results stay stored and visible.
 
 ## 13. Dashboard and reporting
 
 - **Answer these easily:**
   - Where does our money go?
   - Where does it come from?
-  - Is recognized income greater than expenses?
+  - Is income greater than spending?
   - How much did we spend per week, month, year, or custom period?
   - What changed versus the prior period?
   - What are the biggest contributors?
-- Incoming money has its own section, separate from the spending category list. Ordinary employment income is shown apart from exceptional inflows (family gifts, one-time refunds), while every correctly classified transaction still counts in net cash flow.
+- Incoming money has its own section. Employment income is shown apart from exceptional inflows (gifts, one-time refunds), and all of them still count in net cash flow.
 - **Defaults:**
   - a clear summary,
   - simple visualizations,
-  - readable rounded numbers,
+  - rounded numbers,
   - direct drilldown to transactions.
-- Custom date ranges and comparisons are available without cluttering the first screen.
-- Budgets are deferred and never required.
+- Custom ranges and comparisons are available without cluttering the first screen.
+- No required budgets.
 
-## 14. Engineering and release expectations
+## 14. Engineering expectations
 
-- **Work in phases:**
-  1. Foundation and principles.
-  2. Data model and tested calculations.
-  3. Local PDF parsing and import review.
-  4. Persistence and encrypted backups.
-  5. Dashboard and drilldowns.
-  6. Polish and end-to-end validation.
-
-  Resolve foundational security and data-model questions before large implementations.
+- Work in **small phases with tests** (`docs/ARCHITECTURE.md` §12). Each phase is reviewed before the next begins.
 - Keep these independently testable:
-  - PDF parsers,
-  - transaction normalization,
+  - parsers,
+  - normalization,
   - categorization,
   - duplicate detection,
   - calculations,
   - storage,
   - backup,
   - UI.
-- **Required automated tests include:**
-  - transfers and credit-card payments,
-  - gifts,
-  - refunds,
-  - cash withdrawals and splits,
+- **Required tests include:**
+  - financial definitions (§10),
   - duplicate and overlapping imports,
   - malformed, unsupported, and scanned PDFs,
-  - missing data,
-  - uncertain categories,
-  - net cash flow,
-  - backup round-trip, wrong passphrase, and tampering,
-  - network isolation.
-- **Before any commit or push,** run:
-  - type checks,
-  - unit tests,
-  - the repository hygiene check,
-  - the production build,
-  - the build-output privacy check,
-  - the browser network-isolation tests.
-
-  Review the diff for unintended changes and sensitive data. If a check fails or a privacy requirement is unverified, do not describe the work as complete or secure.
-- Keep the project easy to extend, but do not over-engineer for hypothetical users.
-- **Deploying to GitHub Pages is a release decision.** The app must not be published for use with real data until [§17](#17-open-decisions) items marked *blocking* are resolved. The "Release gate" checklist in `docs/ARCHITECTURE.md` must also pass.
+  - missing or ambiguous values,
+  - review-before-save,
+  - encryption round-trip, wrong passphrase, and tampering,
+  - lock and unlock,
+  - interrupted saves and restores,
+  - backup and restore,
+  - network isolation of the built app.
+- **Before any commit or push,** run `npm run verify` (and, once the desktop shell exists, the Rust tests and config checks). Review the diff for unintended changes and sensitive data. If a check fails or a privacy requirement is unverified, do not describe the work as complete or secure.
+- **Real data starts only after** the household go-live checklist in `docs/ARCHITECTURE.md` §14 passes.
 
 ## 15. Current enforcement (what is actually verified today)
 
 | Requirement | Mechanism | Verified by |
 |---|---|---|
-| No outbound network from the page | CSP `connect-src 'none'`, `default-src 'none'` | `e2e/network-isolation.spec.ts` (asserts a `connect-src` CSP violation) |
-| Only same-origin static files load | No CDN, no web fonts, relative asset paths | `e2e/network-isolation.spec.ts`, `scripts/check-build-output.mjs` |
-| Shipped CSP is strict | Meta CSP in `index.html` | `scripts/check-build-output.mjs` |
+| UI makes no outbound requests | CSP `connect-src 'none'`, `default-src 'none'` | `e2e/network-isolation.spec.ts` (asserts a `connect-src` CSP violation), Chromium |
+| UI loads only its own files | No CDN, no web fonts | `e2e/network-isolation.spec.ts`, `scripts/check-build-output.mjs` |
+| Built UI has a strict CSP, no source maps, no data files | Build config | `scripts/check-build-output.mjs` |
 | No console logging, network APIs, `eval`, small-value storage, or URL writes in app code | Source scan | `tests/privacy/source-guards.test.ts` |
-| No statements, backups, or exports committed, now or in history | `.gitignore` plus a scan of tracked files and all paths ever added | `scripts/check-repo-hygiene.mjs` (CI) |
-| No source maps or data files published | Build config plus output scan | `scripts/check-build-output.mjs` |
-| No screenshots, videos, or traces from tests | Playwright config | `playwright.config.ts` |
+| No statements, backups or exports committed, now or in history | `.gitignore` plus a scan of all paths ever added | `scripts/check-repo-hygiene.mjs` (CI, full history) |
+| No screenshots, videos or traces from tests | Playwright config | `playwright.config.ts` |
 | Exact money arithmetic | Integer cents | `src/domain/money.test.ts` |
-| Financial definitions (§10): card purchases vs. card payments, transfers, savings, combined employment income, gifts, refunds, cash withdrawals and splits, net cash flow ≠ balance change | Pure functions in `src/domain/calculations.ts` | `src/domain/calculations.test.ts` |
-| Duplicate and overlap detection: same file, overlapping periods, multiset matching, near-matches flagged, no candidate dropped | `src/domain/dedupe.ts` | `src/domain/dedupe.test.ts` |
+| Financial definitions (§10) | `src/domain/calculations.ts` | `src/domain/calculations.test.ts` |
+| Duplicate and overlap detection | `src/domain/dedupe.ts` | `src/domain/dedupe.test.ts` |
 | Transfer and card-payment pairing; ambiguity goes to review | `src/domain/transfers.ts` | `src/domain/transfers.test.ts` |
-| Refund linking; unmatched or ambiguous refunds are not guessed | `src/domain/refunds.ts` | `src/domain/refunds.test.ts` |
+| Refund linking; nothing guessed | `src/domain/refunds.ts` | `src/domain/refunds.test.ts` |
 
-Tests are checked for meaningfulness by deliberately breaking a rule and confirming a test fails. This was done for card-payment exclusion, multiset dedupe, and transfer ambiguity.
+Tests were mutation-checked: a rule was deliberately broken and a test confirmed to fail. This was done for card-payment exclusion, multiset dedupe, and transfer ambiguity.
 
-Not yet implemented, so **no claims may be made about these yet:** PDF import, IndexedDB persistence, the app lock, encrypted backup and restore, origin isolation in deployment, categorization, and the dashboard over real data. The calculation functions are tested, but no real data flows through them yet.
+**Not yet implemented, so no claims may be made about these yet:**
+- the desktop app itself,
+- its sandbox and network isolation,
+- encrypted storage, lock and unlock,
+- safe saving,
+- backup and restore,
+- PDF import,
+- categorization,
+- the dashboard over real data.
 
-## 16. Residual risks we accept and document
+## 16. Residual risks
 
-These remain after our mitigations. The user-facing help must describe them honestly.
+These remain after mitigation. The app's help text must describe them honestly.
 
-1. **Anyone with access to the computer account and browser profile** can open the app and see the data. Once the app lock (D2) is built, this applies only **while the app is unlocked**. Until then, the data is not encrypted by the app. Mitigations: auto-lock, OS login, full-disk encryption, a dedicated browser profile.
-2. **Browser extensions** with access to the page can read what it displays and stores. Mitigation: use a browser profile without extensions for this app.
-3. **Compromised code delivery.** Someone with push access to the repository could, through a stolen GitHub account or malicious dependency, publish code that reads the data and sends it elsewhere, for example by navigation, which CSP cannot fully block. A malicious deploy could also change the CSP itself. Mitigations:
-   - 2FA on the GitHub account,
-   - branch protection,
+1. **Anyone using the Mac while the app is unlocked** can see the data. Mitigations: auto-lock, macOS login, FileVault.
+2. **Malware or keyloggers on the Mac**, or someone with administrator control of it, can capture the passphrase or read memory. The app cannot defend against a compromised computer.
+3. **A malicious build of the app** would receive the passphrase when unlocked. This could come from a compromised GitHub account, a malicious dependency, or a tampered download. Mitigations:
+   - 2FA on GitHub,
    - pinned, minimal, reviewed dependencies,
-   - SHA-pinned Actions,
-   - manual deploys.
-4. **Shared origin.** Until D1 is resolved, other GitHub Pages projects on the same account share this origin and its storage.
-5. **Clickjacking.** GitHub Pages cannot send `X-Frame-Options` or a CSP `frame-ancestors` header, and `frame-ancestors` is ignored in meta tags. The app takes no sensitive one-click actions, and destructive actions require confirmation dialogs.
-6. **Data loss.** Browser storage can be cleared. Backups are the only protection, and a forgotten backup passphrase cannot be recovered.
-7. **Parser errors.** Extraction can be wrong. Validation against statement totals, review screens, and flags reduce this risk but do not remove it.
-8. **Backup files** are only as strong as the passphrase. Where they are stored is the user's choice.
+   - CI builds from public source,
+   - checksums.
+   - Without paid signing, macOS cannot verify the publisher.
+4. **Weak passphrases** can be guessed offline from a copied data file or backup. A memory-hard key derivation slows this down but cannot rescue a weak passphrase.
+5. **A forgotten passphrase** means permanent loss of that data or backup.
+6. **Data loss** from a lost or failed Mac or deleted files. Only backups protect against it.
+7. **Parser errors.** Validation and review reduce them but do not eliminate them.
+8. **Malicious PDFs** could exploit a bug in the PDF parser. The parser runs inside the app's sandbox, with no network.
+9. **Webview and OS components** (Apple WebKit, macOS) are outside our control. They are patched by macOS updates, so keep macOS up to date.
 
-## 17. Open decisions
+## 17. Decisions
 
-| ID | Decision | Status | Recommendation |
-|---|---|---|---|
-| D1 | **Dedicated origin** so no other site shares this app's storage. The household does not currently own a domain. | **Blocking** before real data. Recommendation awaiting approval. | A free GitHub organization used only for this app, with Pages enabled on this repository only. See `docs/ARCHITECTURE.md` §3, plus a runtime origin guard that refuses to open the vault on any other origin. |
-| D2 | **App lock / at-rest encryption.** | **Decided 2026-10-19: required.** Design awaiting approval. | Passphrase-unlocked vault: a random data key, wrapped by an Argon2id-derived key, held in memory only while unlocked. Auto-lock on idle. See `docs/ARCHITECTURE.md` §7. |
-| D3 | **Key derivation and backup encryption.** | Recommendation awaiting approval. | Argon2id (RFC 9106) via `@noble/hashes` (pure JS, zero dependencies, no CSP change), with AES-256-GCM via WebCrypto. The same scheme is used for the app lock and for backups. See `docs/ARCHITECTURE.md` §8. |
-| D5 | **Deployment.** The Pages deploy workflow is manual-only until D1 and the release gate are satisfied. | Open | Keep manual |
-| D6 | **Offline use / service worker.** Would improve resilience, but a cached service worker can also persist a bad deploy. | Deferred | Not in v1 |
+| ID | Decision | Status |
+|---|---|---|
+| D1 | Dedicated web origin | **Retired 2026-10-29.** Not needed: no web hosting of the app. |
+| D2 | Passphrase lock for local data, key never stored | **Decided 2026-10-19.** Design in `docs/ARCHITECTURE.md` §5. |
+| D3 | Encryption implementation | **Recommendation awaiting approval:** the `age` file-encryption format via its Rust crate (`docs/ARCHITECTURE.md` §5). |
+| D4 | PDF library | Planned: pdf.js, bundled in the app; reviewed in the import phase. |
+| D5 | Platform and distribution | **Decided 2026-10-29:** Tauri, macOS only, household use. No paid signing, public distribution or auto-updates for now. |
+| D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
 
+- **2026-10-29, v2.0.** Architecture changed to a standalone Mac app (Tauri), approved by the household user.
+  - Removed:
+    - browser hosting,
+    - GitHub Pages deployment,
+    - IndexedDB storage,
+    - origin isolation (D1 retired).
+  - Added:
+    - the no-network-during-normal-use rule,
+    - least-privilege requirements (App Sandbox without network entitlements),
+    - safe-saving and error-handling requirements,
+    - "a test vector is not an audit".
+  - D3 re-evaluated for the desktop context.
+  - All non-negotiable requirements are kept; browser-specific mechanisms were replaced with desktop equivalents.
 - **2026-10-19, v1.1.**
-  - D2 decided by the household user: a passphrase app lock is required, and the encryption key is never persisted alongside the data.
-  - D1 direction: no custom domain is available. Investigate a dedicated GitHub organization, with deployment manual-only until isolation is verified.
-  - D3 direction: prefer Argon2id when a reputable implementation can be integrated safely. Never implement custom cryptography.
-  - Phase 2 calculations implemented and tested (§15).
-
-- **2026-10-18, v1.0.** Created from `household-finance-product-and-security-principles.md` and the project brief. All original requirements incorporated (see the appendix). Added:
-  - origin isolation (D1),
-  - CSP-based network enforcement,
-  - integer-cent arithmetic,
-  - last-four-digits-only account identifiers,
-  - no stored PDFs,
-  - residual-risk register,
-  - open-decision register.
+  - D2 decided: the passphrase lock is required and the key is never persisted alongside the data.
+  - D1 and D3 directions given.
+  - Phase 2 calculations implemented and tested.
+- **2026-10-18, v1.0.** Created from `household-finance-product-and-security-principles.md` and the project brief.
 
 ---
 
@@ -384,13 +410,15 @@ These remain after our mitigations. The user-facing help must describe them hone
 
 | Original section | Where it lives now |
 |---|---|
-| 1. Non-negotiable: financial data privacy (all bullets) | §1, §2, §3, §8, §16 |
+| 1. Non-negotiable: financial data privacy | §1, §2, §3, §8, §16 |
 | 2. Product goal | §4 |
 | 3. User experience and visual direction | §5 |
-| 4. Initial workflow and data storage | §6, §7, §8 |
-| 5. Accounts and household model | §9, §3.1 (no bank credentials), §4 (settings, not hardcoded) |
+| 4. Initial workflow and data storage | §6, §7, §8 (browser storage replaced by encrypted files on the Mac) |
+| 5. Accounts and household model | §9, §3.1, §4 |
 | 6. Financial definitions and transaction rules | §10 |
-| 7. Categorization principles (including the AI/real-statement rule) | §11, §3.4 |
+| 7. Categorization principles (incl. AI/real-statement rule) | §11, §3.4 |
 | 8. Import quality and auditability | §7, §12 |
 | 9. Dashboard and reporting | §13 |
 | 10. Engineering and release expectations | §14, §15 |
+
+The original's GitHub Pages items ("GitHub Pages hosts code only", browser storage notes) are superseded by the Mac architecture. Their intent, that no financial data is ever stored on or sent to any server, is kept in §3.1.
