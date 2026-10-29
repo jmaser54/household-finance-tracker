@@ -1,0 +1,27 @@
+[package]
+name = "household-money"
+version = "0.1.0"
+description = "Private household spending and income tracker. All data stays on this Mac."
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", default-features = false }
+
+[dependencies]
+# Only the webview runtime and asset compression. No plugins, no devtools,
+# nothing network-capable. scripts/check-desktop-config.mjs enforces this.
+tauri = { version = "=2.12.2", default-features = false, features = ["wry", "compression"] }
+
+[features]
+# CI-only build that proves the page loads and that macOS blocks networking.
+# Never enabled in the app you install (see docs/ARCHITECTURE.md §11).
+smoke-test = []
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

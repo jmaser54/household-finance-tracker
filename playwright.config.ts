@@ -12,6 +12,12 @@ export default defineConfig({
     video: 'off',
     trace: 'off',
   },
+  // Chromium everywhere; WebKit (the engine inside the Mac app) runs in the
+  // macOS CI job, where Playwright's WebKit build is installed.
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    { name: 'webkit', use: { browserName: 'webkit' } },
+  ],
   webServer: {
     command: 'npx vite preview --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173',

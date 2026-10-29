@@ -30,3 +30,9 @@ playwright-report/
 private/
 statements/
 real-data/
+
+# Tauri build output
+src-tauri/target/
+src-tauri/gen/
+*.app/
+Household-Money-macOS.zip

@@ -23,9 +23,49 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run check:repo
+      - run: npm run check:desktop
       - run: npm run build
       - run: npm run check:build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
-      # Deliberately no artifact uploads: CI never publishes screenshots,
-      # traces or reports (PROJECT_PRINCIPLES.md §3.4).
+      # No screenshots, traces or reports are ever uploaded (PROJECT_PRINCIPLES.md §3.4).
+
+  macos-app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: rustc --version && cargo --version
+      - run: npm run check:desktop
+      - run: npm run test:rust
+      - run: npm run build
+      - run: npx playwright install webkit
+      - name: UI network isolation in WebKit (the Mac app's engine)
+        run: npm run test:e2e:webkit
+      - name: Smoke build (CI only, never uploaded)
+        run: npx tauri build --bundles app --features smoke-test --ci
+      - name: Smoke test (page loads in sandbox; macOS blocks network)
+        run: scripts/macos-smoke-test.sh
+      - name: Release build
+        run: npx tauri build --bundles app --ci
+      - name: Verify release app (signature, entitlements, sockets, Gatekeeper)
+        run: scripts/macos-verify-app.sh
+      - name: Package
+        run: |
+          ditto -c -k --keepParent "src-tauri/target/release/bundle/macos/Household Money.app" Household-Money-macOS.zip
+          shasum -a 256 Household-Money-macOS.zip | tee Household-Money-macOS.zip.sha256
+      # The download contains only the app's code: no data, screenshots or logs.
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Household-Money-macOS
+          path: |
+            Household-Money-macOS.zip
+            Household-Money-macOS.zip.sha256
+          retention-days: 7
+          if-no-files-found: error
