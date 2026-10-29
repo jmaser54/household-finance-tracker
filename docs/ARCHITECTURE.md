@@ -99,6 +99,22 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 
 If you prefer the smallest dependency set, the RustCrypto option is the alternative, but then we would own a file format.
 
+**Decision (2026-10-29): `age` passphrase mode, for both the data file and backups.** This is the simplest suitable approach: one library call to encrypt, one to decrypt, and no keys of our own to manage.
+
+**Verified by reading the `age` 0.12.1 source** (not by running it yet):
+- **Key derivation:** passphrase files use scrypt with a random 16-byte salt.
+- **Work factor:** calibrated on the device that creates the file, to about 1 second (log₂N measured at encrypt time; default 18 if timing fails).
+- **Decryption ceiling:** decryption refuses files that demand more than about 16× that device's own target (`ExcessiveWork`). This guards against malicious files that would take hours.
+  - *Consequence:* a backup made on a much faster Mac could be refused on a much slower one.
+  - Phase B therefore sets an explicit, documented ceiling for opening backups.
+- **One passphrase per file:** a passphrase must be the only recipient of a file. It cannot be combined with keys or with a second passphrase. That is fine for us: one household passphrase for the data file, and one typed passphrase per backup.
+- **Passphrase handling:** the library keeps the passphrase in a `SecretString`, which is wiped from memory when dropped.
+
+**Limitations to state plainly:**
+- `age` does not hide a file's approximate size.
+- `age` has no notion of "who made this file": anyone with the passphrase can create a valid one.
+- No independent audit of the crate was found. Interoperability tests in Phase C check format compatibility, not security.
+
 **How it is used:**
 - **Data file:** `ledger.age` holds the whole ledger as JSON, encrypted with the household passphrase.
   - Unlocking decrypts it, which takes about 1 second.

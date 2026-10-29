@@ -378,7 +378,7 @@ These remain after mitigation. The app's help text must describe them honestly.
 |---|---|---|
 | D1 | Dedicated web origin | **Retired 2026-10-29.** Not needed: no web hosting of the app. |
 | D2 | Passphrase lock for local data, key never stored | **Decided 2026-10-19.** Design in `docs/ARCHITECTURE.md` §5. |
-| D3 | Encryption implementation | **Recommendation awaiting approval:** the `age` file-encryption format via its Rust crate (`docs/ARCHITECTURE.md` §5). |
+| D3 | Encryption implementation | **Decided 2026-10-29:** `age` passphrase mode (scrypt + ChaCha20-Poly1305) via its Rust crate, for the data file and backups. No custom cryptography. Verified properties and limitations in `docs/ARCHITECTURE.md` §5. Implemented in Phase B. |
 | D4 | PDF library | Planned: pdf.js, bundled in the app; reviewed in the import phase. |
 | D5 | Platform and distribution | **Decided 2026-10-29:** Tauri, macOS only, household use. No paid signing, public distribution or auto-updates for now. |
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
