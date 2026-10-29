@@ -19,6 +19,8 @@ test('diagnose import in this browser', async ({ page, browserName }) => {
     els.map((e) => `${e.getAttribute('data-file-status')} | ${(e as HTMLElement).innerText.replace(/\s+/g, ' ').slice(0, 200)}`),
   );
   notes.push(...cards.map((c) => `card: ${c}`));
+  notes.push(`pdf diag: ${await page.evaluate(() => String((globalThis as Record<string, unknown>).__TEMP_PDF_DIAG))}`);
+  notes.push(`worker urls: ${await page.evaluate(() => performance.getEntriesByType('resource').map((e) => e.name.split('/').pop()).filter((n) => /pdf/.test(n ?? '')).join(','))}`);
   console.log(`DIAG[${browserName}]\n  ${notes.join('\n  ')}`);
 });
 void (null as unknown as Page);

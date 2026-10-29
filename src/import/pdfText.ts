@@ -77,6 +77,7 @@ export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfT
   try {
     doc = await task.promise;
   } catch (error) {
+    (globalThis as Record<string, unknown>).__TEMP_PDF_DIAG = `open: ${String((error as Error)?.name)}: ${String((error as Error)?.message).slice(0, 200)}`;
     const name = (error as { name?: string } | null)?.name;
     throw new PdfReadError(name === 'PasswordException' ? 'password_protected' : 'unreadable');
   }
@@ -94,6 +95,7 @@ export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfT
     }
     return { pageCount: doc.numPages, lines, characterCount };
   } catch (error) {
+    (globalThis as Record<string, unknown>).__TEMP_PDF_DIAG = `read: ${String((error as Error)?.name)}: ${String((error as Error)?.message).slice(0, 200)}`;
     if (error instanceof PdfReadError) throw error;
     throw new PdfReadError('unreadable');
   } finally {
