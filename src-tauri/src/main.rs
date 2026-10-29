@@ -33,11 +33,19 @@ fn main() {
                 .first()
                 .ok_or("main window is not configured")?
                 .clone();
-            let builder = WebviewWindowBuilder::from_config(app.handle(), &config)?
-                .on_navigation(|url| is_app_url(url));
+            #[cfg(feature = "smoke-test")]
+            smoke::start(app.handle().clone());
+            let builder = WebviewWindowBuilder::from_config(app.handle(), &config)?.on_navigation(|url| {
+                let allowed = is_app_url(url);
+                #[cfg(feature = "smoke-test")]
+                smoke::note(&format!("navigation {} {}://{}", if allowed { "allowed" } else { "refused" }, url.scheme(), url.host_str().unwrap_or("")));
+                allowed
+            });
             #[cfg(feature = "smoke-test")]
             let builder = smoke::attach(builder);
             builder.build()?;
+            #[cfg(feature = "smoke-test")]
+            smoke::note("window-created");
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -53,17 +61,34 @@ mod smoke {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
     use tauri::webview::PageLoadEvent;
-    use tauri::{Manager, Runtime, WebviewWindowBuilder};
+    use tauri::{AppHandle, Manager, Runtime, WebviewWindowBuilder};
+
+    /// Fixed progress markers (never data) on stderr, which is unbuffered.
+    pub fn note(message: &str) {
+        eprintln!("SMOKE {message}");
+    }
+
+    /// Marks startup and ends the run after 45 s if the page never finishes
+    /// loading, so CI always gets output instead of a hang.
+    pub fn start<R: Runtime>(app: AppHandle<R>) {
+        note("setup");
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(45));
+            note("timeout waiting for page load");
+            app.exit(2);
+        });
+    }
 
     pub fn attach<'a, R: Runtime, M: Manager<R>>(
         builder: WebviewWindowBuilder<'a, R, M>,
     ) -> WebviewWindowBuilder<'a, R, M> {
         builder.on_page_load(|window, payload| {
             if payload.event() != PageLoadEvent::Finished {
+                note(&format!("page-load-started {}://{}", payload.url().scheme(), payload.url().host_str().unwrap_or("")));
                 return;
             }
-            println!("SMOKE page-loaded {}", payload.url());
-            println!("SMOKE network {}", network_probe());
+            note(&format!("page-loaded {}", payload.url()));
+            note(&format!("network {}", network_probe()));
             let app = window.app_handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(2));
