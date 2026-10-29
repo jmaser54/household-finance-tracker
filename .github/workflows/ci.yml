@@ -42,23 +42,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: rustc --version && cargo --version
+      - name: Rust targets for a universal (Intel + Apple Silicon) app
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
       - run: npm run check:desktop
       - run: npm run test:rust
       - run: npm run build
       - run: npx playwright install webkit
       - name: UI network isolation in WebKit (the Mac app's engine)
         run: npm run test:e2e:webkit
+      - name: Rosetta (to run the Intel half of the app in the smoke test)
+        run: arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Smoke build (CI only, never uploaded)
-        run: npx tauri build --bundles app --features smoke-test --ci
-      - name: Smoke test (renders in sandbox; outside fetch and navigation blocked)
+        run: npx tauri build --bundles app --target universal-apple-darwin --features smoke-test --ci
+      - name: Smoke test, Intel and Apple Silicon (renders in sandbox; outside fetch and navigation blocked)
         run: scripts/macos-smoke-test.sh
       - name: Release build
-        run: npx tauri build --bundles app --ci
+        run: npx tauri build --bundles app --target universal-apple-darwin --ci
       - name: Verify release app (signature, entitlements, sockets, Gatekeeper)
         run: scripts/macos-verify-app.sh
       - name: Package
         run: |
-          ditto -c -k --keepParent "src-tauri/target/release/bundle/macos/Household Money.app" Household-Money-macOS.zip
+          ditto -c -k --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/Household Money.app" Household-Money-macOS.zip
           shasum -a 256 Household-Money-macOS.zip | tee Household-Money-macOS.zip.sha256
       # The download contains only the app's code: no data, screenshots or logs.
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

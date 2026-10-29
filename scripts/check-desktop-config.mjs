@@ -33,6 +33,7 @@ if (conf.bundle?.createUpdaterArtifacts) fail('updater artifacts must not be cre
 if (JSON.stringify(conf.bundle?.targets) !== '["app"]') fail('bundle.targets must be exactly ["app"]');
 if (conf.bundle?.macOS?.entitlements !== 'Entitlements.plist') fail('bundle.macOS.entitlements must be Entitlements.plist');
 if (conf.bundle?.macOS?.signingIdentity !== '-') fail('macOS signing must stay ad-hoc ("-") for household builds');
+if (conf.bundle?.macOS?.minimumSystemVersion !== '12.0') fail('bundle.macOS.minimumSystemVersion must be 12.0 (the household Mac runs Monterey)');
 
 // --- macOS entitlements ------------------------------------------------------
 const plist = readFileSync('src-tauri/Entitlements.plist', 'utf8').replace(/<!--[\s\S]*?-->/g, '');

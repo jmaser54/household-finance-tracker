@@ -30,7 +30,7 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 
 | Choice | Decision | Why |
 |---|---|---|
-| Platform | Tauri 2, macOS only | Uses the Mac's own WebKit, which macOS keeps patched. The app is small and the native code is minimal. |
+| Platform | Tauri 2, macOS 12 Monterey or later; one universal app (Intel + Apple Silicon) | Uses the Mac's own WebKit, which macOS keeps patched. The app is small and the native code is minimal. |
 | UI | Existing Preact + Vite build | Reuse what exists; it already ships no network code and a strict CSP |
 | Logic | Existing `src/domain` (TypeScript) | Already tested; runs unchanged in the app window |
 | Storage | One encrypted file, plus the previous version | Simple and atomic, and Time Machine backs it up (encrypted) |
@@ -264,7 +264,9 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 
 **Getting the app onto your Mac** (no paid signing):
 - The repo is public, so I expect GitHub's macOS runners to be free. That is from my own knowledge and has not been checked from here.
-- CI builds an ad-hoc-signed `.app`, zipped, and prints its SHA-256. The artifact is kept for 7 days and contains only code.
+- CI builds one **universal** ad-hoc-signed `.app` (Intel + Apple Silicon, macOS 12 Monterey or later), zipped, and prints its SHA-256.
+- **Compatibility checks in CI:** both processor types are present; `LSMinimumSystemVersion` is 12.0, and each half of the binary is compiled for macOS 12.0 or earlier. The smoke test runs the Apple Silicon half natively and the Intel half under Rosetta.
+  - *Not verifiable in CI:* a real Intel Mac, or macOS 12 itself. GitHub's runners are newer Apple Silicon Macs, so the first launch on the household Mac is the real Monterey test. The artifact is kept for 7 days and contains only code.
 - **Install steps:**
   1. Download the zip.
   2. Check the checksum.

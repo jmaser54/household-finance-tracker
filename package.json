@@ -19,7 +19,7 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "check:desktop": "node scripts/check-desktop-config.mjs",
     "app:dev": "tauri dev",
-    "app:build": "tauri build --bundles app"
+    "app:build": "tauri build --bundles app --target universal-apple-darwin"
   },
   "engines": {
     "node": ">=22"

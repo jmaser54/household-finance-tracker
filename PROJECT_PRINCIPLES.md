@@ -110,7 +110,7 @@ This applies to everything the project produces: the running app, its data files
 
 ## 4. Product goal and scope
 
-A household **spending and income tracker** for a married couple with separate accounts and fully joint finances. **Current focus: this household, on one Mac.**
+A household **spending and income tracker** for a married couple with separate accounts and fully joint finances. **Current focus: this household, on one Mac.** The app supports **macOS 12 Monterey or later, on Intel and Apple Silicon Macs** (one universal app), because the household's Mac is a 2017 Intel MacBook Air on Monterey.
 
 - **Not now:**
   - Windows or Linux builds,
@@ -391,6 +391,8 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-29, v2.2.** Minimum macOS lowered from 13 to 12 Monterey, and the app is built universal (Intel + Apple Silicon) for the household's 2017 Intel MacBook Air. Security requirements are unchanged.
 
 - **2026-10-29, v2.1.** Phase A finding, decided by the household user.
   - Apple's WebKit does not render in a sandboxed app without the outgoing-network entitlement, so the sandbox now grants `network.client`. macOS therefore permits outgoing connections.

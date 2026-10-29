@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CI (macOS). Verifies the release build you will install:
-#  1. it is validly (ad-hoc) signed,
+#  1. it is validly (ad-hoc) signed, contains Intel and Apple Silicon code,
+#     and every part of it is compiled to run on macOS 12 Monterey,
 #  2. its entitlements are exactly App Sandbox + network.client (which WebKit
 #     needs to render; macOS therefore permits outgoing connections),
 #  3. it contains no smoke-test code,
@@ -10,13 +11,31 @@
 #     for an unsigned household build, i.e. it needs "Open Anyway" once.
 set -euo pipefail
 
-APP="src-tauri/target/release/bundle/macos/Household Money.app"
+APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Household Money.app"
 BIN="$(find "$APP/Contents/MacOS" -type f -perm -u+x | head -n 1)"
 
 echo "== 1. Signature"
 codesign --verify --deep --strict --verbose=2 "$APP"
 codesign -dv "$APP" 2>&1 | grep -E '^(Identifier|Format|Signature)=' || true
 codesign -dv "$APP" 2>&1 | grep -q '^Signature=adhoc' || { echo "Expected an ad-hoc signature." >&2; exit 1; }
+
+echo "== 1b. Intel + Apple Silicon, and runs on macOS 12 Monterey"
+ARCHS="$(lipo -archs "$BIN")"
+echo "Architectures: $ARCHS"
+for want in x86_64 arm64; do
+  case " $ARCHS " in *" $want "*) ;; *) echo "Missing $want code." >&2; exit 1 ;; esac
+done
+PLIST_MIN="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")"
+echo "Info.plist LSMinimumSystemVersion: $PLIST_MIN"
+[ "$PLIST_MIN" = "12.0" ] || { echo "Expected LSMinimumSystemVersion 12.0." >&2; exit 1; }
+for want in x86_64 arm64; do
+  # The OS version each half was compiled for (LC_BUILD_VERSION minos).
+  MINOS="$(otool -arch "$want" -l "$BIN" | awk '/LC_BUILD_VERSION/{f=1} f&&$1=="minos"{print $2; exit}')"
+  echo "$want compiled for macOS $MINOS or later"
+  [ -n "$MINOS" ] || { echo "Could not read the minimum OS of the $want code." >&2; exit 1; }
+  python3 -c "import sys; v=tuple(map(int,'$MINOS'.split('.'))); sys.exit(0 if v <= (12,0) else 1)" \
+    || { echo "The $want code requires macOS $MINOS, newer than Monterey 12." >&2; exit 1; }
+done
 
 echo "== 2. Entitlements"
 codesign -d --entitlements - --xml "$APP" 2>/dev/null > /tmp/entitlements.plist
