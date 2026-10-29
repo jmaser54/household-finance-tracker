@@ -477,3 +477,167 @@ h1 {
   display: grid;
   gap: 4px;
 }
+
+/* Statement import and review (Phase D). */
+.dropzone-active {
+  border-color: var(--grass);
+  background: var(--track);
+}
+
+.import-screen {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+  display: grid;
+  gap: 20px;
+}
+
+.import-intro h2 {
+  margin: 0 0 4px;
+  font-size: 26px;
+}
+
+.import-intro p {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.import-card {
+  background: var(--card);
+  border: var(--outline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.import-card h3 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.import-card p {
+  margin: 0;
+}
+
+.statement-facts {
+  font-weight: 700;
+}
+
+.account-choice,
+.new-account label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+
+.new-account {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.import-card select,
+.import-card input:not([type='checkbox']) {
+  font: inherit;
+  padding: 6px 10px;
+  border: var(--outline);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.row-counts {
+  color: var(--ink-soft);
+  font-size: 15px;
+}
+
+.review-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+  display: block;
+  overflow-x: auto;
+}
+
+.review-table th,
+.review-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--track);
+  vertical-align: top;
+}
+
+.review-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.money-in {
+  color: var(--grass-deep);
+  font-weight: 700;
+}
+
+.row-duplicate td,
+.row-unusable td {
+  color: var(--ink-soft);
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 999px;
+  border: 2px solid var(--ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.chip-new {
+  border-color: var(--grass);
+}
+
+.chip-check,
+.chip-unusable {
+  border-color: var(--clay);
+}
+
+.row-reason {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.diagnostics summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.diagnostics pre {
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--paper);
+  font-size: 12px;
+}
+
+.import-footer {
+  display: grid;
+  gap: 8px;
+}

@@ -16,6 +16,27 @@ const REQUIRED_CSP_DIRECTIVES = [
 ];
 // Strings that look like URLs but are inert identifiers, not network targets.
 const ALLOWED_URL_PREFIXES = ['http://www.w3.org/', 'https://www.w3.org/'];
+
+// Reviewed one by one (Phase D) and allowed ONLY inside the bundled pdf.js
+// files. None is contacted: they are license links, XML namespace names that
+// pdf.js compares as strings, and fake URLs that the core-js polyfills parse
+// to test the browser's URL support. A new URL after a pdf.js upgrade fails
+// this check until it has been reviewed and added here.
+const PDFJS_FILES = /^assets\/(pdf\.worker\.min|pdfjsApp)-[\w-]+\.m?js$/;
+const PDFJS_REVIEWED_URLS = new Set([
+  // License links in comments.
+  'http://www.apache.org/licenses/LICENSE-2.0',
+  'https://github.com/zloirock/core-js/blob/v3.50.0/LICENSE',
+  'https://github.com/zloirock/core-js',
+  // core-js feature tests for the URL API (parsed, never fetched).
+  'https://a', 'https://a/c%20d?a=1&c=3', 'https://a@b', 'https://тест', 'https://a#б', 'https://x',
+  'http://${e}', 'http://example.com', 'https://foo.bar',
+  // XML namespace identifiers for XFA forms and XMP metadata.
+  'http://www.xfa.org/schema/xci/', 'http://www.xfa.org/schema/xfa-connection-set/', 'http://www.xfa.org/schema/xfa-data/',
+  'http://www.xfa.org/schema/xfa-form/', 'http://www.xfa.org/schema/xfa-locale-set/', 'http://www.xfa.org/schema/xfa-source-set/',
+  'http://www.xfa.org/schema/xfa-template/', 'http://www.xfa.org/schema/xdc/', 'http://www.xfa.org/schema/xfa-data/1.0/',
+  'http://ns.adobe.com/xdp/pdf/', 'http://ns.adobe.com/xdp/', 'http://ns.adobe.com/xfdf/', 'http://ns.adobe.com/xmpmeta/',
+]);
 const ALLOWED_EXTENSIONS = new Set(['.html', '.js', '.css', '.svg', '.png', '.ico', '.webmanifest', '.woff2', '.mjs']);
 
 const failures = [];
@@ -32,7 +53,8 @@ for (const file of files) {
   const text = readFileSync(file, 'utf8');
   for (const match of text.matchAll(/(?:https?:|wss?:)\/\/[^\s"'`)<>\\]+/g)) {
     const url = match[0];
-    if (!ALLOWED_URL_PREFIXES.some((prefix) => url.startsWith(prefix))) {
+    const reviewedPdfJsString = PDFJS_FILES.test(rel) && PDFJS_REVIEWED_URLS.has(url);
+    if (!reviewedPdfJsString && !ALLOWED_URL_PREFIXES.some((prefix) => url.startsWith(prefix))) {
       failures.push(`external URL in ${rel}: ${url}`);
     }
   }

@@ -2,7 +2,7 @@
 
 Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles say *what must be true*; this file says *how*. If they disagree, the principles win and this file gets fixed.
 
-**Status (2026-10-29):** Phases A (Mac app shell), B (encrypted storage, lock and unlock) and C (encrypted backup and restore) are implemented. PDF import and the dashboard are not. Anything not marked *done* is still a plan.
+**Status (2026-10-29):** Phases A (Mac app shell), B (encrypted storage, lock and unlock), C (encrypted backup and restore) and D (PDF statement import and review) are implemented. The dashboard is not. Anything not marked *done* is still a plan.
 
 ## 1. Shape of the app
 
@@ -218,26 +218,64 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - **Recognition rules** are implemented in `src/domain/calculations.ts` (*done*).
 - The saved file wraps these records with a schema version. Migrations are pure TypeScript functions, each with a test.
 
-## 9. Import pipeline
+## 9. Import pipeline (*done*, Phase D)
 
-1. **Read** each chosen PDF in the window, compute its SHA-256, and extract positioned text with pdf.js. Run it in a worker, with font loading, eval and network disabled.
-2. **Classify** each file as text-based or image-only (scanned). Image-only files are flagged as unsupported.
-3. **Pick a parser.** Each registered parser scores how well it recognises the document; the most confident one parses it. If none is confident, the file is flagged as an unsupported layout.
-4. **Validate:** balances, totals, counts, dates inside the statement period, and every amount parses (amount parsing never guesses).
-5. **Deduplicate** against saved data: same file, overlapping periods, multiset matching, near-matches flagged (`src/domain/dedupe.ts`, *done*).
-6. **Classify** transactions and link transfers and refunds (*done*: `transfers.ts`, `refunds.ts`). Anything uncertain is flagged.
-7. **Review screen.** Confirm, or discard.
-8. **Commit** as one save.
+**How a statement is read** (`src/import/`; all of it happens in the app window, in memory):
+1. You choose or drop PDFs. The bytes are read from the file in memory. **PDFs are never stored or sent anywhere**; only a SHA-256 fingerprint is kept, to recognise the same file later.
+2. pdf.js (`pdfjs-dist` 6.4.299, **legacy build**) extracts positioned text in a worker bundled with the app.
+   - Options: no `eval`, no font loading, no streaming, logging limited to errors.
+   - The legacy build is used because the modern build calls JavaScript features (such as `Promise.try`) that Safari 17 on macOS Monterey lacks. The legacy build carries its own polyfills.
+   - Limits: 25 MB and 60 pages per file.
+3. Checks before reading: not a PDF, damaged, or password-protected files are reported as such. Fewer than 25 characters of text per page means **scanned / image-only**, which is explained and not guessed at (no OCR).
+4. **Parsers** (`parsers/registry.ts`): each registered parser reads the text and the best-scoring result wins. Today there is one, `generic-table` (`parsers/generic.ts`), a general reader for the common layout of a table where rows start with a date and end with amounts:
+   - **Statement details:** the period (several common wordings and date formats), opening and closing balances, account type, and the last four digits of the account number. Nothing more of the number is kept.
+   - **Rows:** posted date (and transaction date when two dates are printed), the description exactly as printed (with indented continuation lines joined), and the amount.
+     - Short dates like "03/05" are placed in the statement period's year; statements spanning New Year work.
+   - **Money in or out**, in this order: the column (Withdrawals/Debits vs Deposits/Credits), a printed marker (minus, parentheses, CR/DR), the section heading (e.g. "Purchases", "Payments and Other Credits"), the running balance, and on cards only, "unmarked means a charge". **If none applies, the row is flagged and not added.**
+   - **Validation:**
+     - opening balance plus activity must equal the closing balance (for cards, the balance owed);
+     - each row is checked against the running balance;
+     - posted dates must fall inside the period;
+     - lines that look like transactions but can't be read are counted and shown, never dropped silently.
+5. **Review** (`plan.ts`, `src/ui/Import.tsx`):
+   - **Accounts:** each statement is matched to an existing account by type and last four digits, or proposed as a new, nameable account. Several months of a new account share one account.
+   - **Duplicates and overlaps**, via `src/domain/dedupe.ts`: the same file again is "already added". Lines in an already-imported period are matched as a multiset, so genuine identical purchases survive. Near-matches are marked "Check this".
+   - Each row shows *New*, *Already added*, *Check this* or *Can't use*, and can be left out.
+   - **A statement whose balances don't add up is held back** until you tick "I've checked these transactions; add them anyway".
+6. **Adding** (`applyImport`, one atomic save):
+   - **First-pass classification** (`classify.ts`), following §10 of the principles:
+     - ATM withdrawals are *Cash / Untracked*, with no explanation needed;
+     - card payments and transfers are marked from the statement's wording;
+     - savings interest is *Interest*;
+     - deposits are **not** assumed to be employment income. "Payroll" only suggests it, flagged to confirm;
+     - everything uncertain is flagged for review.
+   - **Pairing and linking:** transfers and card payments are paired across accounts with `src/domain/transfers.ts`, and card refunds are linked to their purchase with `src/domain/refunds.ts`.
+   - **Corrections are kept:** classifications you corrected earlier (`source: "user"`) are never changed.
+   - A line repeated on an overlapping statement is recorded once, listing both statements.
+   - Cancelling, or a failed save, changes nothing.
 
-## 10. Refining parsers without sharing statements
+**Supported layouts today**, each tested with synthetic PDFs (`tests/fixtures/synthetic`, generated by `scripts/generate-synthetic-statements.mjs`):
+- **Checking** with Withdrawals / Deposits / Balance columns: multi-page, repeated headers, two-line descriptions, total lines.
+- **Savings** with one signed Amount column and a written-out period.
+- **Credit card** with section headings and transaction + posting dates, including a statement spanning New Year.
 
-- Parsers are developed against **synthetic PDFs** generated by test scripts. They mimic each layout's structure using invented data.
-- When a real statement doesn't parse correctly, an in-app diagnostics panel shows **masked structure** on screen only:
-  - which parser was tried and why,
-  - which check failed,
-  - line shapes like `DATE TEXT AMOUNT`, with values hidden.
+**Not supported yet:**
+- **Scanned or image-only PDFs:** there is no OCR, deliberately, so nothing is guessed.
+- **Password-protected PDFs:** save an unlocked copy first.
+- **Layouts the general reader doesn't recognise.** For example:
+  - no transaction table;
+  - dates printed as words in every row ("Mar 5") rather than numbers;
+  - amounts split across lines;
+  - statements that print no period.
+- **Unmarked amounts in a single Amount column on a bank statement with no running balance:** the sign can't be determined, so those rows are flagged and not added.
 
-  You describe or copy that masked shape, and a matching synthetic fixture is written from it. No real document leaves the Mac.
+**Whether it reads *your* banks' statements is unknown until you try them on your Mac.** That is by design: no real statement has been seen by anyone but you.
+
+## 10. Refining parsers without sharing statements (*done*, Phase D)
+
+- Parsers are developed against **synthetic PDFs** generated by `scripts/generate-synthetic-statements.mjs`. They mimic each layout's structure using invented data. `npm run check:fixtures` confirms the committed files match the generator.
+- When a statement can't be read, or has unread lines, the review screen offers **"Show what the app saw (all values hidden)"**. Every date, amount, number and word becomes `DATE`, `AMOUNT`, `NUMBER` or `TEXT`; only layout words such as "Balance" or "Withdrawals" remain (`src/import/diagnostics.ts`). It is shown on screen only.
+- You can copy or describe that masked shape. A matching synthetic fixture and parser change can then be written without any real document leaving the Mac.
 
 ## 11. Verification and tests
 
@@ -286,7 +324,7 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 | **A. Mac shell** *(done)* | Wrap the existing UI in Tauri; App Sandbox (with `network.client`, required by WebKit); CSP, capabilities and navigation lock; config and crate checks; macOS CI build with entitlement and socket checks; delete the Pages deploy workflow | The app opens on your Mac showing today's welcome screen, and every network check passes |
 | **B. Encrypted storage** *(done)* | Passphrase setup and unlock screen, lock and auto-lock, atomic save and load, previous-version fallback, single-writer lock, error messages | Storage, interruption and lock tests pass |
 | **C. Backup and restore** *(done)* | Make a backup (household passphrase, read-back check), two-step restore with confirmation, pre-restore copy, file panels via Rust | Backup and restore tests pass, including interruption at every step, and a restore rehearsal on your Mac |
-| **D. PDF import** | pdf.js, parser interface, synthetic layouts, scanned-PDF detection, review screen, diagnostics | Import tests pass |
+| **D. PDF import** *(done)* | pdf.js, parser interface, synthetic layouts, scanned-PDF detection, review screen, diagnostics | Import tests pass |
 | **E. Dashboard** | Overview, spending and income, comparisons, drilldowns, review queue, rules from corrections | Totals traceable; tests pass |
 | **F. Go-live** | Checklist in §14 | You import real statements, on your Mac only |
 
@@ -311,7 +349,8 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 | tauri-plugin-dialog 2.8.2 (Phase C) | Yes | Returns the chosen file path to Rust only | None. Its macOS tree adds `rfd` (native panels) and `tauri-plugin-fs` as a library (never registered); no networking crates (checked) | Official Tauri plugin; `gtk3` feature only affects Linux development builds |
 | age 0.12.1 (Phase B) | Yes | Encrypts and decrypts everything | None. Its macOS dependency tree (about 90 crates, including unused post-quantum and translation crates) contains no networking crates (checked) | Format spec plus Go reference implementation; its cipher crate is NCC-audited; **no audit found for the crate itself**. No optional features. |
 | @tauri-apps/api 2.12.2 (Phase B) | Yes | Carries the passphrase and ledger to and from Rust | None (zero dependencies; only `invoke` and `isTauri` are used) | Official Tauri JavaScript API, pinned to match the Rust crate |
-| pdfjs-dist (planned, D) | Yes | Reads statements | Disabled; blocked by CSP and sandbox | Reviewed in Phase D |
+| pdfjs-dist 6.4.299 (Phase D), legacy build | Yes | Reads statements | None used: PDFs are passed as bytes; no font, stream or WebAssembly fetching; blocked by the CSP anyway | Mozilla's PDF library, zero required dependencies (its optional `@napi-rs/canvas` is Node-only and never shipped). The built files contain URL-like strings (licenses, XML namespaces, core-js URL self-tests); each was reviewed and is allow-listed exactly in `check-build-output.mjs`. |
+| pdf-lib 1.17.1 (Phase D) | Dev only | Synthetic fixtures only | Not shipped | Generates the synthetic statement PDFs |
 | vite, vitest, typescript, @playwright/test, @types/node, @tauri-apps/cli | Dev only | Synthetic data only | Not shipped | — |
 
 ## 14. Household go-live checklist (before real statements)

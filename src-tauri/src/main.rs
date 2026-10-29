@@ -139,6 +139,31 @@ mod smoke {
       document.querySelector('button[type=submit]')?.click();
       for (let i = 0; i < 75 && !document.querySelector('.preview') && !document.querySelector('[role=alert]'); i++) await new Promise((r) => setTimeout(r, 200));
       await report('ui-' + (document.querySelector('.preview') ? 'opened' : document.querySelector('[role=alert]') ? 'alert' : 'stuck'));
+      await report('secure-context-' + window.isSecureContext + '-subtle-' + (typeof crypto.subtle));
+
+      // 1b. Import a SYNTHETIC statement through the real UI: file input ->
+      //     pdf.js (worker, CSP) -> review screen -> Add -> encrypted save.
+      const pdf = new File([new Uint8Array(__SMOKE_PDF__)], 'smoke-checking.pdf', { type: 'application/pdf' });
+      const picked = new DataTransfer();
+      picked.items.add(pdf);
+      const input = document.querySelector('[data-testid=statement-input]');
+      input.files = picked.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      const reviewing = () => document.querySelector('[data-screen=import]') && !document.querySelector('[aria-busy=true]');
+      for (let i = 0; i < 150 && !reviewing(); i++) await new Promise((r) => setTimeout(r, 200));
+      const addButton = [...document.querySelectorAll('button')].find((b) => /^Add \d+ transaction/.test(b.textContent));
+      if (!reviewing() || !addButton) {
+        await report('import-' + (document.querySelector('[data-file-status]')?.getAttribute('data-file-status') ?? 'no-review-screen'));
+      } else if (document.body.textContent.includes('This statement was already added')) {
+        await report('import-already');
+        [...document.querySelectorAll('button')].find((b) => b.textContent === 'Cancel').click();
+        await pause();
+      } else {
+        addButton.click();
+        let added = null;
+        for (let i = 0; i < 150 && !added; i++) { added = /Added (\d+) transactions?/.exec(document.body.textContent); if (!added) await new Promise((r) => setTimeout(r, 200)); }
+        await report('import-' + (added ? 'added-' + added[1] : 'not-saved'));
+      }
 
       // 2. The same commands directly: save, lock, refuse, unlock.
       await report('status-' + await outcome(() => invoke('vault_status')));
@@ -179,6 +204,9 @@ mod smoke {
     })();"#;
 
     static PROBED: AtomicBool = AtomicBool::new(false);
+
+    /// A SYNTHETIC statement, embedded in the CI-only smoke build only.
+    const SMOKE_PDF: &[u8] = include_bytes!("../../tests/fixtures/synthetic/checking-2026-03.pdf");
 
     /// Fixed progress markers on stderr, which is unbuffered.
     pub fn note(message: &str) {
@@ -229,7 +257,9 @@ mod smoke {
             let verdict = match std::fs::read(dir.join(name)) {
                 Err(_) => "missing",
                 Ok(bytes) if !bytes.starts_with(b"age-encryption.org/v1\n-> scrypt ") => "not-age",
-                Ok(bytes) if bytes.windows(12).any(|w| w == b"SMOKE-CANARY") => "plaintext-visible",
+                Ok(bytes) if bytes.windows(12).any(|w| w == b"SMOKE-CANARY") || bytes.windows(14).any(|w| w == b"EXAMPLE GROCER") => {
+                    "plaintext-visible"
+                }
                 Ok(_) => "encrypted-ok",
             };
             note(&format!("file {name} {verdict}"));
@@ -246,7 +276,9 @@ mod smoke {
             }
             note(&format!("page-loaded {}://{}", payload.url().scheme(), payload.url().host_str().unwrap_or("")));
             if !PROBED.swap(true, Ordering::SeqCst) {
-                if window.eval(PROBE).is_err() {
+                let bytes: Vec<String> = SMOKE_PDF.iter().map(|b| b.to_string()).collect();
+                let probe = PROBE.replace("__SMOKE_PDF__", &format!("[{}]", bytes.join(",")));
+                if window.eval(&probe).is_err() {
                     note("probe-not-started");
                 }
             }

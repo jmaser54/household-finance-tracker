@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-29 (v2.4: Phase C, backup and restore)
+**Last reviewed:** 2026-10-29 (v2.5: Phase D, statement import)
 
 ## How to use this document
 
@@ -390,11 +390,36 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - two-step restore with a clear confirmation, from the app and from the setup screen.
 - Inside the packaged, sandboxed Mac app (macOS CI, with a fixed container file standing in for the panels): backup, wrong passphrase refused, commit without opening refused, restore, and restored data reopening intact. The backup and pre-restore files are age-encrypted with no plaintext.
 
+**Statement import (Phase D), verified by tests on SYNTHETIC PDFs:**
+- Reading (`src/import/readStatement.test.ts`), with the real pdf.js legacy build in Node, which lacks `Promise.try` like Safari 17:
+  - every row, sign, date and description of the checking, savings and card layouts;
+  - two-page tables and continuation lines;
+  - New Year date placement;
+  - balance validation, including a mismatch;
+  - scanned, non-PDF, damaged and no-statement files reported, not guessed;
+  - masked diagnostics that contain no values.
+- Planning and adding (`src/import/plan.test.ts`):
+  - transfers and card payments paired, and excluded from totals;
+  - cash withdrawals, interest, and pay suggested but flagged;
+  - a card refund linked to its purchase and reducing it;
+  - identical same-day purchases both kept;
+  - the same file again adds nothing;
+  - the overlapping day of the next month is recognised;
+  - two months at once share one account;
+  - rows with unknown signs are never added;
+  - corrections are never changed;
+  - planning leaves data untouched;
+  - the existing calculations give the right totals on imported data.
+
+  Mutation-checked: transfer pairing, period-aware dedupe, and column signs.
+- Browser tests (Chromium, and WebKit in macOS CI), recording every request, CSP violation and console message while three statements are read, reviewed and added: **no request beyond the app's own files, no violations, no console output**. Also re-import, overlap, scanned and letter files, balance mismatch held back, rows left out, and cancel.
+- Inside the packaged, sandboxed Mac app (macOS CI, Intel and Apple Silicon): a synthetic statement imported through the real UI, then recognised as already added on the next run. The saved data file is encrypted and shows none of the statement's text.
+
 **Not yet implemented, so no claims may be made about these yet:**
 - changing the passphrase,
 - reopening the pre-restore copy from within the app,
 - the real macOS save and open panels (not clickable in CI; first exercised on the household Mac),
-- PDF import,
+- reading the household's real statement layouts (confirmed only by trying them on the household Mac),
 - categorization,
 - the dashboard over real data.
 
@@ -426,11 +451,19 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D1 | Dedicated web origin | **Retired 2026-10-29.** Not needed: no web hosting of the app. |
 | D2 | Passphrase lock for local data, key never stored | **Decided 2026-10-19.** Design in `docs/ARCHITECTURE.md` §5. |
 | D3 | Encryption implementation | **Decided 2026-10-29:** `age` passphrase mode (scrypt + ChaCha20-Poly1305) via its Rust crate, for the data file and backups. No custom cryptography. Verified properties and limitations in `docs/ARCHITECTURE.md` §5. Implemented in Phase B. |
-| D4 | PDF library | Planned: pdf.js, bundled in the app; reviewed in the import phase. |
+| D4 | PDF library | **Decided 2026-10-29:** pdf.js (`pdfjs-dist` 6.4.299, legacy build for Monterey's Safari 17), bundled and run in a worker inside the app with eval, font loading and streaming off. See `docs/ARCHITECTURE.md` §9 and §13. |
 | D5 | Platform and distribution | **Decided 2026-10-29:** Tauri, macOS only, household use. No paid signing, public distribution or auto-updates for now. |
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-29, v2.5.** Phase D: PDF statement import and review.
+  - pdf.js (legacy build) runs in the app, with masked diagnostics.
+  - A general table reader handles the common checking, savings and card layouts.
+  - Review screen with duplicate and overlap detection; balance-mismatched statements are held back.
+  - First-pass classification following §10–§11.
+  - PDFs are never stored.
+  - Real banks' layouts remain to be confirmed on the household Mac.
 
 - **2026-10-29, v2.4.** Phase C: encrypted backup and restore.
   - Backups use the household passphrase and are checked by reading them back.

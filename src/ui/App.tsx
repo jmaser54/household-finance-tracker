@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { confirmRestore, createHousehold, makeBackup, openBackup, openHousehold } from '../storage/household';
+import { confirmRestore, createHousehold, makeBackup, openBackup, openHousehold, saveHousehold } from '../storage/household';
 import type { LedgerDocument } from '../storage/ledger';
 import { defaultBackend, type VaultBackend } from '../storage/vault';
 import { RestoreScreen } from './Backup';
+import { ImportScreen } from './Import';
+import type { ImportResult } from '../import/plan';
 import { Landing } from './Landing';
 import { messageFor } from './messages';
 import { useIdleLock } from './useIdleLock';
@@ -13,7 +15,11 @@ type Ready = {
   ledger: LedgerDocument;
   recoveredFromPrevious: boolean;
   restored?: { passphraseChanged: boolean };
+  imported?: { added: number; statements: number; needsReview: number };
 };
+
+/** Loads pdf.js (a separate bundled chunk) only when statements are added. */
+const loadPdfJs = () => import('../import/pdfjsApp').then((m) => m.appPdfJs);
 
 type Screen =
   | { name: 'loading' }
@@ -22,6 +28,7 @@ type Screen =
   | Ready
   /** `from` is where Cancel returns to: the setup screen, or the open household. */
   | { name: 'restore'; from: { name: 'setup' } | Ready }
+  | { name: 'import'; from: Ready; files: File[] }
   | { name: 'already_open' }
   | { name: 'problem'; code: string };
 
@@ -112,8 +119,26 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
     setScreen(from);
   };
 
-  // Auto-lock also covers the restore screen once a household is open.
-  useIdleLock(screen.name === 'ready' || (screen.name === 'restore' && screen.from.name === 'ready'), lock);
+  const confirmImport = async (result: ImportResult) => {
+    try {
+      await saveHousehold(backend, result.ledger);
+      setScreen({
+        name: 'ready',
+        ledger: result.ledger,
+        recoveredFromPrevious: false,
+        imported: { added: result.added, statements: result.statements, needsReview: result.needsReview },
+      });
+      return null;
+    } catch (error) {
+      return messageFor(errorCode(error));
+    }
+  };
+
+  // Auto-lock also covers the restore and import screens once a household is open.
+  useIdleLock(
+    screen.name === 'ready' || screen.name === 'import' || (screen.name === 'restore' && screen.from.name === 'ready'),
+    lock,
+  );
 
   switch (screen.name) {
     case 'loading':
@@ -131,6 +156,16 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
           onCancel={() => cancelRestore(screen.from)}
         />
       );
+    case 'import':
+      return (
+        <ImportScreen
+          ledger={screen.from.ledger}
+          files={screen.files}
+          pdfjs={loadPdfJs}
+          onCancel={() => setScreen(screen.from)}
+          onConfirm={confirmImport}
+        />
+      );
     case 'already_open':
       return <NoticeScreen title="Already open" message={messageFor('already_open')} />;
     case 'problem':
@@ -139,6 +174,7 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
       return (
         <Landing
           onLock={lock}
+          onStatements={(files) => setScreen({ name: 'import', from: screen, files })}
           backups={{
             lastBackupAt: screen.ledger.settings.lastBackupAt,
             onBackup: () => backup(screen),
@@ -154,6 +190,14 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
               {screen.recoveredFromPrevious && (
                 <p class="notice notice-warning" role="alert">
                   The latest save couldn't be read, so the previous saved version was opened.
+                </p>
+              )}
+              {screen.imported && (
+                <p class="notice notice-success" role="status">
+                  Added {screen.imported.added} {screen.imported.added === 1 ? 'transaction' : 'transactions'} from{' '}
+                  {screen.imported.statements} {screen.imported.statements === 1 ? 'statement' : 'statements'}.
+                  {screen.imported.needsReview > 0 &&
+                    ` ${screen.imported.needsReview} need a closer look later (for example, choosing a category).`}
                 </p>
               )}
               {screen.restored && (

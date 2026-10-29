@@ -5,6 +5,8 @@
 #  - the bundled page loads inside the App Sandbox and renders (no error banner),
 #  - creating (first run) or unlocking (second run) the household through the
 #    real UI works, with a synthetic passphrase,
+#  - a SYNTHETIC statement PDF is read by pdf.js inside the app, reviewed and
+#    added through the real UI (second run: recognised as already added),
 #  - encrypted saving works; saving while locked and a wrong passphrase are
 #    refused; the saved data reopens intact,
 #  - a backup can be made; a wrong passphrase cannot open it; restoring it
@@ -41,6 +43,8 @@ for ARCH in arm64 x86_64; do
   expect '^SMOKE probe render-ok$' "the app did not render (or showed its error banner)"
   expect '^SMOKE probe screen-(setup|unlock)$' "neither the passphrase setup nor the unlock screen was shown"
   expect '^SMOKE probe ui-opened$' "creating or unlocking the household through the UI did not reach the welcome screen"
+  expect '^SMOKE probe import-(added-13|already)$' "importing a synthetic statement through the UI did not work"
+  grep '^SMOKE probe secure-context' "$OUT" || true
   expect '^SMOKE probe reopen-ok$' "the household did not reopen after locking"
   expect '^SMOKE probe save-ok$' "saving failed"
   expect '^SMOKE probe save-locked-err-locked$' "saving while locked was not refused"
@@ -64,4 +68,4 @@ for ARCH in arm64 x86_64; do
 done
 test -d "$CONTAINER" || { echo "FAIL: no sandbox container was created" >&2; ok=false; }
 [ "$ok" = true ] || exit 1
-echo "Smoke test passed (arm64 and x86_64): renders in the sandbox; encrypted storage, backup and restore work; outside fetch and navigation are blocked."
+echo "Smoke test passed (arm64 and x86_64): renders in the sandbox; statement import, encrypted storage, backup and restore work; outside fetch and navigation are blocked."
