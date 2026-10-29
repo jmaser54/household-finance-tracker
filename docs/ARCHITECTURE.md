@@ -70,6 +70,10 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 
 *To verify in Phase A:* that Tauri's window works under App Sandbox with an ad-hoc signature (no paid certificate), and exactly which CSP entries Tauri's IPC needs. If the sandbox cannot be made to work, I will stop and report back rather than quietly dropping it.
 
+**Phase A finding (2026-10-29, macOS 15 CI runner, WebKit 20621):** under the App Sandbox **without** `com.apple.security.network.client`, Apple's WebKit never starts loading the app's own bundled page. The window opens but stays empty. The same build loads normally with no sandbox, and also with sandbox plus `network.client`.
+
+This was shown by re-signing copies of one CI-only smoke build with each entitlement set (`scripts/macos-sandbox-diagnostics.sh`). So "sandbox with no network entitlement" is not achievable with a WebKit window. The shipped entitlements are unchanged until the household user decides how to proceed.
+
 ## 5. Encryption (D3): options and recommendation
 
 **What we need:**
