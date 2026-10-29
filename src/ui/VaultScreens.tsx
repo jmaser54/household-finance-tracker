@@ -6,7 +6,7 @@ import { messageFor } from './messages';
 type Submit = (passphrase: string) => Promise<string | null>;
 
 /** First run: choose the household passphrase. */
-export function SetupScreen({ onCreate }: { onCreate: Submit }) {
+export function SetupScreen({ onCreate, onRestoreInstead }: { onCreate: Submit; onRestoreInstead: () => void }) {
   const [passphrase, setPassphrase] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +61,12 @@ export function SetupScreen({ onCreate }: { onCreate: Submit }) {
         <button type="submit" class="primary-button" disabled={busy}>
           {busy ? 'Setting up…' : 'Create household'}
         </button>
+        <p class="hint">
+          Moving to this Mac from another one?{' '}
+          <button type="button" class="link-button" onClick={onRestoreInstead} disabled={busy}>
+            Restore from a backup instead
+          </button>
+        </p>
       </form>
     </main>
   );

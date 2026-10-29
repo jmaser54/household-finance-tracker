@@ -23,6 +23,16 @@ pub const PREVIOUS: &str = "ledger.previous.age";
 const TEMP: &str = "ledger.age.tmp";
 const PREVIOUS_TEMP: &str = "ledger.previous.age.tmp";
 pub const LOCK: &str = "household.lock";
+/// Copy of the household data as it was just before the last restore.
+pub const BEFORE_RESTORE: &str = "ledger.before-restore.age";
+
+/// Highest scrypt cost accepted when opening a backup (log2 N; 2^21 needs
+/// about 2 GiB of memory). Fixed rather than relative to this Mac, so a
+/// backup made on a faster Mac still opens on the 2017 MacBook Air, while a
+/// malicious file cannot demand hours of work or tens of GiB of memory.
+pub const BACKUP_MAX_WORK_FACTOR: u8 = 21;
+/// A backup file larger than this is refused before it is read.
+const MAX_BACKUP_FILE_BYTES: u64 = MAX_LEDGER_BYTES as u64 + 1024 * 1024;
 
 pub const MIN_PASSPHRASE_CHARS: usize = 12;
 const MAX_PASSPHRASE_CHARS: usize = 1024;
@@ -48,6 +58,8 @@ pub enum VaultError {
     InvalidText,
     ReadFailed,
     WriteFailed,
+    /// A backup was written but reading it back did not give the same data.
+    BackupUnverified,
 }
 
 impl VaultError {
@@ -63,6 +75,7 @@ impl VaultError {
             Self::InvalidText => "invalid_text",
             Self::ReadFailed => "read_failed",
             Self::WriteFailed => "write_failed",
+            Self::BackupUnverified => "backup_unverified",
         }
     }
 }
@@ -95,12 +108,21 @@ pub fn encrypt(plaintext: &str, passphrase: &SecretString, work_factor: Option<u
 }
 
 pub fn decrypt(ciphertext: &[u8], passphrase: &SecretString) -> Result<String, VaultError> {
+    decrypt_with_ceiling(ciphertext, passphrase, None)
+}
+
+/// `max_work_factor`: None uses age's default ceiling (about 16× this Mac's
+/// own ~1 s cost), which suits the data file this Mac wrote itself.
+fn decrypt_with_ceiling(ciphertext: &[u8], passphrase: &SecretString, max_work_factor: Option<u8>) -> Result<String, VaultError> {
     let decryptor = age::Decryptor::new_buffered(ciphertext).map_err(classify)?;
     // A passphrase file must contain only a passphrase stanza.
     if !decryptor.is_scrypt() {
         return Err(VaultError::Damaged);
     }
-    let identity = age::scrypt::Identity::new(passphrase.clone());
+    let mut identity = age::scrypt::Identity::new(passphrase.clone());
+    if let Some(max) = max_work_factor {
+        identity.set_max_work_factor(max);
+    }
     let mut reader = decryptor
         .decrypt(iter::once(&identity as &dyn age::Identity))
         .map_err(classify)?;
@@ -251,6 +273,68 @@ impl Vault {
         interrupt(SaveStep::Replaced)?;
         File::open(&self.dir)?.sync_all()?;
         Ok(())
+    }
+}
+
+/// Writes an encrypted backup to a file the user chose, then reads it back and
+/// decrypts it to prove it is complete and opens with the passphrase.
+///
+/// The sandbox only permits writing the exact file chosen in the save panel,
+/// so this cannot use a temporary file plus rename. A failure part-way can
+/// leave a damaged backup at that path; the read-back check catches it and
+/// reports `BackupUnverified` or `WriteFailed`. The household data itself is
+/// never touched.
+pub fn write_backup(path: &Path, passphrase: &SecretString, ledger: &str, work_factor: Option<u8>) -> Result<(), VaultError> {
+    let bytes = encrypt(ledger, passphrase, work_factor)?;
+    let written = (|| -> io::Result<()> {
+        let mut file = File::create(path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()
+    })();
+    written.map_err(|_| VaultError::WriteFailed)?;
+    match read_backup(path, passphrase) {
+        Ok(read_back) if read_back == ledger => Ok(()),
+        _ => Err(VaultError::BackupUnverified),
+    }
+}
+
+/// Reads and decrypts a backup file the user chose.
+pub fn read_backup(path: &Path, passphrase: &SecretString) -> Result<String, VaultError> {
+    let size = fs::metadata(path).map_err(|_| VaultError::ReadFailed)?.len();
+    if size > MAX_BACKUP_FILE_BYTES {
+        return Err(VaultError::TooLarge);
+    }
+    let bytes = fs::read(path).map_err(|_| VaultError::ReadFailed)?;
+    decrypt_with_ceiling(&bytes, passphrase, Some(BACKUP_MAX_WORK_FACTOR))
+}
+
+impl Vault {
+    /// Replaces the household data with a restored ledger.
+    ///
+    /// First keeps a copy of the current data file, whatever its state, as
+    /// `ledger.before-restore.age` (still encrypted with the old passphrase),
+    /// then saves the restored ledger with the normal atomic save. If the
+    /// restore is interrupted at any point, `ledger.age` is either the old
+    /// data or the restored data, never a mixture or nothing.
+    pub fn restore(
+        &self,
+        passphrase: &SecretString,
+        ledger: &str,
+        keep_previous: bool,
+        work_factor: Option<u8>,
+        interrupt: &mut dyn FnMut(SaveStep) -> io::Result<()>,
+    ) -> Result<(), VaultError> {
+        let current = self.path(CURRENT);
+        if current.exists() {
+            let copy = self.path(&format!("{BEFORE_RESTORE}.tmp"));
+            (|| -> io::Result<()> {
+                fs::copy(&current, &copy)?;
+                File::open(&copy)?.sync_all()?;
+                fs::rename(&copy, self.path(BEFORE_RESTORE))
+            })()
+            .map_err(|_| VaultError::WriteFailed)?;
+        }
+        self.save(passphrase, ledger, keep_previous, work_factor, interrupt)
     }
 }
 
@@ -513,6 +597,148 @@ mod tests {
         for error in [VaultError::WrongPassphrase, VaultError::Damaged, VaultError::WriteFailed] {
             assert!(error.code().chars().all(|c| c.is_ascii_lowercase() || c == '_'));
         }
+    }
+
+    // ---- Backups and restore -------------------------------------------------
+
+    #[test]
+    fn backup_round_trip_with_the_household_passphrase() {
+        let dir = TempDir::new();
+        let file = dir.0.join("Household Money Backup.hmbackup");
+        write_backup(&file, &good(), LEDGER_A, FAST).unwrap();
+        assert!(fs::read(&file).unwrap().starts_with(b"age-encryption.org/v1\n-> scrypt "));
+        assert!(!String::from_utf8_lossy(&fs::read(&file).unwrap()).contains("synthetic ledger"));
+        assert_eq!(read_backup(&file, &good()).unwrap(), LEDGER_A);
+    }
+
+    #[test]
+    fn backup_with_wrong_passphrase_is_refused() {
+        let dir = TempDir::new();
+        let file = dir.0.join("b.hmbackup");
+        write_backup(&file, &good(), LEDGER_A, FAST).unwrap();
+        assert_eq!(read_backup(&file, &pass("some other passphrase")).err(), Some(VaultError::WrongPassphrase));
+    }
+
+    #[test]
+    fn damaged_truncated_or_foreign_backups_are_refused() {
+        let dir = TempDir::new();
+        let file = dir.0.join("b.hmbackup");
+        write_backup(&file, &good(), LEDGER_A, FAST).unwrap();
+        let bytes = fs::read(&file).unwrap();
+
+        let mut flipped = bytes.clone();
+        let last = flipped.len() - 3;
+        flipped[last] ^= 0x40;
+        fs::write(&file, flipped).unwrap();
+        assert_eq!(read_backup(&file, &good()).err(), Some(VaultError::Damaged));
+
+        fs::write(&file, &bytes[..bytes.len() / 2]).unwrap();
+        assert_eq!(read_backup(&file, &good()).err(), Some(VaultError::Damaged));
+
+        for foreign in [&b""[..], b"%PDF-1.7 not a backup", b"{\"schemaVersion\":1}"] {
+            fs::write(&file, foreign).unwrap();
+            assert_eq!(read_backup(&file, &good()).err(), Some(VaultError::Damaged));
+        }
+    }
+
+    #[test]
+    fn missing_backup_file_is_a_read_failure() {
+        let dir = TempDir::new();
+        assert_eq!(read_backup(&dir.0.join("nope.hmbackup"), &good()).err(), Some(VaultError::ReadFailed));
+    }
+
+    #[test]
+    fn oversized_backup_is_refused_before_reading() {
+        let dir = TempDir::new();
+        let file = dir.0.join("big.hmbackup");
+        File::create(&file).unwrap().set_len(MAX_BACKUP_FILE_BYTES + 1).unwrap();
+        assert_eq!(read_backup(&file, &good()).err(), Some(VaultError::TooLarge));
+    }
+
+    /// Rewrites the scrypt cost declared in a file's header (the payload stays as is).
+    fn with_declared_work_factor(bytes: &[u8], from: u8, to: u8) -> Vec<u8> {
+        let needle = format!(" {from}\n").into_bytes();
+        let at = bytes.windows(needle.len()).position(|w| w == needle.as_slice()).unwrap();
+        [&bytes[..at], format!(" {to}\n").as_bytes(), &bytes[at + needle.len()..]].concat()
+    }
+
+    #[test]
+    fn backup_from_a_faster_mac_opens_but_an_absurd_work_factor_does_not() {
+        let dir = TempDir::new();
+        // A real backup made at a higher cost than the tests' usual one (as a
+        // faster Mac would choose) opens.
+        let faster = dir.0.join("faster.hmbackup");
+        write_backup(&faster, &good(), LEDGER_A, Some(16)).unwrap();
+        assert_eq!(read_backup(&faster, &good()).unwrap(), LEDGER_A);
+        // A file declaring more than the fixed ceiling is refused before any work.
+        let absurd = dir.0.join("absurd.hmbackup");
+        let bytes = encrypt(LEDGER_A, &good(), FAST).unwrap();
+        fs::write(&absurd, with_declared_work_factor(&bytes, 10, BACKUP_MAX_WORK_FACTOR + 1)).unwrap();
+        assert_eq!(read_backup(&absurd, &good()).err(), Some(VaultError::ExcessiveWork));
+    }
+
+    #[test]
+    fn backup_write_failure_is_reported() {
+        let dir = TempDir::new();
+        // A directory in place of the chosen file makes the write fail.
+        let file = dir.0.join("not-a-file.hmbackup");
+        fs::create_dir(&file).unwrap();
+        assert_eq!(write_backup(&file, &good(), LEDGER_A, FAST).err(), Some(VaultError::WriteFailed));
+    }
+
+    #[test]
+    fn making_a_backup_never_changes_household_data() {
+        let (dir, vault) = vault_with(&[LEDGER_A, LEDGER_B]);
+        let before: Vec<Vec<u8>> = [CURRENT, PREVIOUS].iter().map(|f| fs::read(dir.0.join(f)).unwrap()).collect();
+        write_backup(&dir.0.join("b.hmbackup"), &good(), LEDGER_B, FAST).unwrap();
+        let after: Vec<Vec<u8>> = [CURRENT, PREVIOUS].iter().map(|f| fs::read(dir.0.join(f)).unwrap()).collect();
+        assert_eq!(before, after);
+        assert_eq!(vault.open(&good()).unwrap().ledger, LEDGER_B);
+    }
+
+    #[test]
+    fn restore_replaces_data_and_keeps_a_copy_of_what_it_replaced() {
+        let (dir, vault) = vault_with(&[LEDGER_A]);
+        let old_pass = good();
+        let backup_pass = pass("passphrase used for the backup");
+        vault.restore(&backup_pass, LEDGER_B, true, FAST, &mut |_| Ok(())).unwrap();
+        // The restored data opens with the backup's passphrase...
+        assert_eq!(vault.open(&backup_pass).unwrap().ledger, LEDGER_B);
+        // ...and the replaced data is kept, still encrypted with the old one.
+        let kept = decrypt(&fs::read(dir.0.join(BEFORE_RESTORE)).unwrap(), &old_pass).unwrap();
+        assert_eq!(kept, LEDGER_A);
+        assert!(!dir.0.join(format!("{BEFORE_RESTORE}.tmp")).exists());
+    }
+
+    #[test]
+    fn restore_onto_a_new_mac_needs_no_existing_data() {
+        let dir = TempDir::new();
+        let vault = Vault::new(&dir.0);
+        vault.restore(&good(), LEDGER_A, false, FAST, &mut |_| Ok(())).unwrap();
+        assert_eq!(vault.open(&good()).unwrap().ledger, LEDGER_A);
+        assert!(!dir.0.join(BEFORE_RESTORE).exists());
+    }
+
+    #[test]
+    fn interrupted_restore_at_every_step_leaves_old_or_restored_data_never_neither() {
+        for step in [SaveStep::TempWritten, SaveStep::TempFlushed, SaveStep::PreviousKept, SaveStep::Replaced] {
+            let (dir, vault) = vault_with(&[LEDGER_A]);
+            let result = vault.restore(&good(), LEDGER_B, true, FAST, &mut stop_at(step));
+            assert_eq!(result.err(), Some(VaultError::WriteFailed), "{step:?}");
+            let expected = if step == SaveStep::Replaced { LEDGER_B } else { LEDGER_A };
+            assert_eq!(vault.open(&good()).unwrap().ledger, expected, "{step:?}");
+            // The pre-restore copy is complete regardless of where it stopped.
+            assert_eq!(decrypt(&fs::read(dir.0.join(BEFORE_RESTORE)).unwrap(), &good()).unwrap(), LEDGER_A, "{step:?}");
+        }
+    }
+
+    #[test]
+    fn restore_keeps_a_copy_even_of_unreadable_current_data() {
+        let (dir, vault) = vault_with(&[LEDGER_A]);
+        fs::write(dir.0.join(CURRENT), b"damaged").unwrap();
+        vault.restore(&good(), LEDGER_B, false, FAST, &mut |_| Ok(())).unwrap();
+        assert_eq!(fs::read(dir.0.join(BEFORE_RESTORE)).unwrap(), b"damaged");
+        assert_eq!(vault.open(&good()).unwrap().ledger, LEDGER_B);
     }
 
     #[test]

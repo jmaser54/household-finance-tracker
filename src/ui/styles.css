@@ -376,3 +376,104 @@ h1 {
   border-color: var(--clay);
   font-weight: 700;
 }
+
+/* Backups (Phase C). */
+.backup-card {
+  background: var(--card);
+  border: var(--outline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 24px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.backup-card h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.backup-card p {
+  margin: 0;
+}
+
+.backup-when {
+  font-weight: 700;
+}
+
+.backup-never {
+  color: var(--clay);
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.secondary-button,
+.danger-button,
+.link-button {
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.secondary-button {
+  font-size: 16px;
+  padding: 9px 18px;
+  border: var(--outline);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.danger-button {
+  font-size: 18px;
+  padding: 10px 20px;
+  border: var(--outline);
+  border-radius: 999px;
+  background: var(--clay);
+  color: #fff;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.secondary-button:focus-visible,
+.danger-button:focus-visible,
+.link-button:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
+.secondary-button:disabled,
+.danger-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.form-success {
+  color: var(--grass-deep);
+  font-weight: 700;
+}
+
+.notice-success {
+  border-color: var(--grass);
+  font-weight: 700;
+}
+
+.summary-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}

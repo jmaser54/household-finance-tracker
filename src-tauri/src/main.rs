@@ -9,9 +9,10 @@
 //   network.client because WebKit will not render in the sandbox without it,
 //   so macOS itself PERMITS outgoing connections; the layers above are what
 //   keep the app from making any;
-// - no Tauri plugins; the page's only native capabilities are the five vault
-//   commands in commands.rs (create, unlock, save, lock, status), which read
-//   and write encrypted files in the app's own sandbox container.
+// - one Tauri plugin (dialog), used only from Rust for the backup save/open
+//   panels; the page's only native capabilities are the commands in
+//   commands.rs, which read and write encrypted files in the app's own
+//   sandbox container and the backup file the person picks.
 
 mod commands;
 mod vault;
@@ -33,12 +34,19 @@ fn is_app_url(url: &Url) -> bool {
 
 fn main() {
     tauri::Builder::default()
+        // Native save/open panels, used only from Rust (commands.rs). No
+        // capability grants the window any dialog permission.
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::vault_status,
             commands::vault_create,
             commands::vault_unlock,
             commands::vault_save,
             commands::vault_lock,
+            commands::backup_create,
+            commands::restore_open,
+            commands::restore_commit,
+            commands::restore_cancel,
         ])
         .setup(|app| {
             // Inside the App Sandbox this is the app's private container:
@@ -98,6 +106,7 @@ mod smoke {
     /// 2. creating or unlocking the household through the real UI, then the
     ///    encrypted save / lock / wrong-passphrase / unlock round trip through
     ///    the same commands, with a synthetic passphrase,
+    /// 3. backup, a refused wrong-passphrase restore, and a full restore,
     /// 3. whether the CSP blocked a fetch to an outside site,
     /// 4. then tries to navigate to an outside site, which must be refused.
     const PROBE: &str = r#"(async () => {
@@ -142,8 +151,23 @@ mod smoke {
       await outcome(() => invoke('vault_lock'));
       await report('save-locked-' + await outcome(() => invoke('vault_save', { ledger: '{}' }).then(() => 'saved')));
       await report('wrong-' + await outcome(() => invoke('vault_unlock', { passphrase: 'not the smoke passphrase' }).then(() => 'opened')));
+      let saved = null;
       await report('unlock-' + await outcome(() => invoke('vault_unlock', { passphrase: PASS })
-        .then(([saved, recovered]) => (JSON.parse(saved).settings.householdName === CANARY && !recovered ? 'ok' : 'mismatch'))));
+        .then(([ledgerJson, recovered]) => { saved = ledgerJson; return JSON.parse(ledgerJson).settings.householdName === CANARY && !recovered ? 'ok' : 'mismatch'; })));
+
+      // 3. Backup and restore through the same commands. In this CI-only build
+      //    a fixed file in the container stands in for the save/open panels.
+      const backupLedger = JSON.stringify({ ...JSON.parse(saved), settings: { ...JSON.parse(saved).settings, householdName: 'SMOKE-CANARY-BACKUP' } });
+      await report('backup-' + await outcome(() => invoke('backup_create', { ledger: backupLedger, date: '2026-10-29' }).then(() => 'ok')));
+      await report('restore-wrong-' + await outcome(() => invoke('restore_open', { passphrase: 'not the smoke passphrase' }).then(() => 'opened')));
+      await report('restore-commit-without-open-' + await outcome(() => invoke('restore_commit').then(() => 'committed')));
+      await report('restore-open-' + await outcome(() => invoke('restore_open', { passphrase: PASS }).then((json) => (json === backupLedger ? 'ok' : 'mismatch'))));
+      await report('restore-commit-' + await outcome(() => invoke('restore_commit').then((changed) => (changed === false ? 'ok' : 'unexpected'))));
+      await outcome(() => invoke('vault_lock'));
+      await report('restored-' + await outcome(() => invoke('vault_unlock', { passphrase: PASS })
+        .then(([ledgerJson]) => (JSON.parse(ledgerJson).settings.householdName === 'SMOKE-CANARY-BACKUP' ? 'ok' : 'mismatch'))));
+      // Leave a valid household for the next run's UI unlock.
+      await outcome(() => invoke('vault_save', { ledger: saved }));
       await outcome(() => invoke('vault_lock'));
 
       let fetchResult = 'fetch-sent';
@@ -199,7 +223,7 @@ mod smoke {
         };
         let in_container = dir.to_string_lossy().contains("/Library/Containers/");
         note(&format!("data-in-container {}", if in_container { "yes" } else { "no" }));
-        for name in [crate::vault::CURRENT, crate::vault::PREVIOUS] {
+        for name in [crate::vault::CURRENT, crate::vault::PREVIOUS, crate::vault::BEFORE_RESTORE, "smoke-backup.hmbackup"] {
             let verdict = match std::fs::read(dir.join(name)) {
                 Err(_) => "missing",
                 Ok(bytes) if !bytes.starts_with(b"age-encryption.org/v1\n-> scrypt ") => "not-age",

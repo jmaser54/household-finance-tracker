@@ -7,7 +7,9 @@
   macOS PERMITS outgoing connections; it does not mean the app makes any. The
   app has no networking code, its window cannot fetch or navigate off-app,
   and CI checks for network activity (docs/ARCHITECTURE.md §4, §11).
-  No network.server, hardware, personal-data or file entitlements.
+  files.user-selected.read-write: the app may read or write only a file the
+  person picks in a save or open panel (backups). No other files.
+  No network.server, hardware or personal-data entitlements.
   Do not add entries without updating PROJECT_PRINCIPLES.md §3.1 and
   scripts/check-desktop-config.mjs.
 -->
@@ -16,6 +18,8 @@
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 </dict>
 </plist>

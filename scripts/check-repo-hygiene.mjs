@@ -10,6 +10,8 @@ const SYNTHETIC_DIR = 'tests/fixtures/synthetic/';
 const FORBIDDEN = [
   { pattern: /\.pdf$/i, allowUnder: SYNTHETIC_DIR, reason: 'PDF outside the synthetic fixtures folder' },
   { pattern: /\.hhbackup(\.json)?$/i, reason: 'app backup file' },
+  { pattern: /\.hmbackup$/i, reason: 'Household Money backup file' },
+  { pattern: /\.age$/i, reason: 'encrypted household data file' },
   { pattern: /backup.*\.json$/i, reason: 'possible backup export' },
   { pattern: /\.(csv|ofx|qfx|qif|xlsx?)$/i, reason: 'financial export format' },
   { pattern: /(^|\/)(private|statements|real-data)\//i, reason: 'private data folder' },

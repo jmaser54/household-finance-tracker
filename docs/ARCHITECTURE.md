@@ -2,7 +2,7 @@
 
 Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles say *what must be true*; this file says *how*. If they disagree, the principles win and this file gets fixed.
 
-**Status (2026-10-29):** Phases A (Mac app shell) and B (encrypted storage, lock and unlock) are implemented. Backup and restore, PDF import and the dashboard are not. Anything not marked *done* is still a plan.
+**Status (2026-10-29):** Phases A (Mac app shell), B (encrypted storage, lock and unlock) and C (encrypted backup and restore) are implemented. PDF import and the dashboard are not. Anything not marked *done* is still a plan.
 
 ## 1. Shape of the app
 
@@ -59,12 +59,12 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 - `com.apple.security.app-sandbox` = true.
 - `com.apple.security.network.client` = true. **Required:** Apple's WebKit will not display even the app's own bundled page in a sandboxed app without it (Phase A finding below). This means **macOS permits outgoing connections from the app.** The app is built not to make any (no networking code, CSP, navigation lock); the OS does not block them.
 - **No** `network.server`: no incoming connections.
-- No file entitlements yet. `files.user-selected.read-write` (only files you pick) is added in the phases that open PDFs and save backups.
+- `com.apple.security.files.user-selected.read-write` = true (Phase C): the app may read or write only a file you pick in a save or open panel, which today means backups. Nothing else outside its own container.
 - No camera, microphone, contacts, location, or automation.
 
 **Tauri:**
-- **Native commands (*done*, Phase B):** exactly five: `vault_status`, `vault_create`, `vault_unlock`, `vault_save` and `vault_lock` (`src-tauri/src/commands.rs`). The list is enforced by `check-desktop-config.mjs`. They touch only the encrypted files in the app's own container. No Tauri core or plugin permissions are granted. Phase C will add backup commands and the dialog plugin's open and save dialogs.
-- **No plugins:** no `fs`, `http`, `shell`, `opener`, `updater`, `dialog` (yet), or `process`.
+- **Native commands (*done*):** exactly nine: `vault_status`, `vault_create`, `vault_unlock`, `vault_save`, `vault_lock` (Phase B), plus `backup_create`, `restore_open`, `restore_commit` and `restore_cancel` (Phase C), all in `src-tauri/src/commands.rs`. The list is enforced by `check-desktop-config.mjs`. They touch only the encrypted files in the app's own container, and the backup file you pick. No Tauri core or plugin permissions are granted to the window.
+- **One plugin: dialog** (Phase C), used only from Rust for the backup save and open panels. It isn't reachable from the window. It pulls in `tauri-plugin-fs` as a library, which is never registered; this is checked. No `fs`, `http`, `shell`, `opener`, `updater` or `process` plugins.
 - **CSP:** unchanged and identical to `index.html`, with `connect-src 'none'` still in place. Tauri's IPC therefore uses its built-in fallback message channel instead of its `ipc://` fetch channel; verified working inside the sandboxed app in Phase B. No IPC exception was added to the policy.
 - **`freezePrototype` is off.** Preact copies its virtual-DOM nodes when re-rendering, and with `Object.prototype` frozen that copy throws, so the screen could never update (found in Phase B). The option defends against untrusted scripts, which this app never loads. The CSP and the navigation lock remain the boundary.
 - **Navigation:** navigation away from the app's bundled pages and new windows are refused in Rust. This closes the browser-era gap where a page could navigate away with data in the URL.
@@ -161,23 +161,46 @@ A crash at any step leaves a readable `ledger.age`, old or new. This is tested b
 
 **Import commit:** one save. A cancelled or failed import changes nothing.
 
-## 7. Backup and restore
+## 7. Backup and restore (*done*, Phase C)
 
-- **Make a backup:**
-  1. Choose a location (for example a USB drive).
-  2. Type a backup passphrase twice. It may be the same as the household passphrase.
-  3. The app encrypts (age passphrase mode) and writes the file atomically.
-  4. **It reads the file back and decrypts it to check it,** then records "last backed up".
-- **Restore:**
-  1. Pick the file and enter its passphrase.
-  2. The app decrypts it in memory and validates the schema version and internal consistency.
-  3. It shows a summary: date range, accounts, transaction count.
-  4. You confirm.
-  5. The current data is kept as `ledger.before-restore-<date>.age`, still encrypted.
-  6. The restored data is saved with the normal atomic save.
-  7. Any failure leaves current data untouched.
-- **Without the app:** `age -d household-backup.age > backup.json` decrypts a backup. This is documented and tested.
-- **New Mac:** install the app, then restore a backup.
+**What a backup is:** one file, `Household Money Backup YYYY-MM-DD.hmbackup`, saved wherever you choose (for example a USB drive). It holds the whole ledger: accounts, statements, transactions, categories, rules, settings and schema version. It is encrypted with the **household passphrase** in the same standard age format as the data file. There is no separate backup passphrase, and nothing unencrypted is ever written.
+
+**Make a backup** (`backup_create`):
+1. The app records the backup time in the ledger.
+2. You choose where to save the file in the macOS save panel.
+3. The app encrypts the ledger and writes the file.
+4. **It reads the file back and decrypts it**; the backup only counts as saved if the result matches exactly.
+5. "Last backup" is updated on the welcome screen.
+
+- *Why not write to a temporary file and rename?* The App Sandbox lets the app write only the exact file you picked, not a temporary file next to it. If writing is interrupted, the file at that spot may be incomplete. The read-back check reports this as "couldn't be checked, try again". The household data itself is never touched by making a backup (tested).
+- Cancelling the save panel does nothing and records no backup time.
+
+**Restore** (`restore_open`, then `restore_commit`):
+1. Enter the household passphrase that was in use when the backup was made, and choose the file in the open panel.
+2. The app reads and decrypts it, refusing:
+   - wrong passphrases;
+   - damaged or truncated files, and files that aren't backups;
+   - files over 65 MB;
+   - files demanding excessive unlocking work (above scrypt 2^21, about 2 GiB; a fixed ceiling, so a backup from a faster Mac still opens on the 2017 MacBook Air).
+3. The window checks the contents with the same ledger validation used for the data file. A backup from a newer app version, or with damaged or inconsistent contents, is refused and forgotten.
+4. You see a summary (accounts, transactions, date range, backup date) and must confirm. When data already exists, the confirmation clearly says it will replace all household data on this Mac.
+5. The app copies the current data file, whatever its state, to `ledger.before-restore.age`, still encrypted with the old passphrase. It then saves the restored ledger with the normal atomic save, so the previous version is kept too.
+6. After a restore, the household passphrase is the one used for the restore. The app says so if it differs from the one used to unlock.
+
+**Safety rules:**
+- Rust restores exactly the backup it decrypted and holds; the window cannot substitute other data.
+- `restore_commit` without a just-opened backup is refused.
+- Existing data can only be replaced from an unlocked household. A locked household can't be overwritten by a restore.
+- A restore interrupted at any step leaves either the old data or the restored data, never neither or a mixture (tested at every step).
+- Cancelling at either step changes nothing.
+- Restore is also offered from the passphrase setup screen, for a new Mac.
+
+**File panels:** they come from Tauri's dialog plugin, called **only from Rust**; the window has no dialog permission. The sandbox's `files.user-selected.read-write` entitlement lets the app touch only the file picked in a panel.
+
+**Not yet built, or not verified:**
+- **No in-app way to reopen `ledger.before-restore.age`.** It's kept so the replaced data isn't lost, but getting it back currently needs manual steps.
+- **Decrypting a backup with the standalone `age` tool** (`age -d file.hmbackup`) is expected to work, since it's the standard format, but **it has not been tested.** That tool asks for the passphrase interactively, which CI can't provide.
+- **The real save and open panels can't be clicked in CI.** The CI-only smoke build uses a fixed file in the container in their place. The panels themselves are first exercised on your Mac.
 - Time Machine also copies the encrypted data file. That is a bonus, not the backup plan.
 
 ## 8. Data model (schema v1)
@@ -262,7 +285,7 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 |---|---|---|
 | **A. Mac shell** *(done)* | Wrap the existing UI in Tauri; App Sandbox (with `network.client`, required by WebKit); CSP, capabilities and navigation lock; config and crate checks; macOS CI build with entitlement and socket checks; delete the Pages deploy workflow | The app opens on your Mac showing today's welcome screen, and every network check passes |
 | **B. Encrypted storage** *(done)* | Passphrase setup and unlock screen, lock and auto-lock, atomic save and load, previous-version fallback, single-writer lock, error messages | Storage, interruption and lock tests pass |
-| **C. Backup and restore** | Make, check, restore and pre-restore copy; `age` interoperability tests | Backup tests pass, and a restore rehearsal works on your Mac |
+| **C. Backup and restore** *(done)* | Make a backup (household passphrase, read-back check), two-step restore with confirmation, pre-restore copy, file panels via Rust | Backup and restore tests pass, including interruption at every step, and a restore rehearsal on your Mac |
 | **D. PDF import** | pdf.js, parser interface, synthetic layouts, scanned-PDF detection, review screen, diagnostics | Import tests pass |
 | **E. Dashboard** | Overview, spending and income, comparisons, drilldowns, review queue, rules from corrections | Totals traceable; tests pass |
 | **F. Go-live** | Checklist in §14 | You import real statements, on your Mac only |
@@ -285,7 +308,7 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 |---|---|---|---|---|
 | preact 10.29.8 | Yes | Renders it | None | Zero dependencies |
 | tauri 2.12.2, tauri-build 2.7.2 (Phase A) | Yes | Will carry IPC (no commands yet) | No network plugins. Its `reqwest` dependency is compiled only for iOS/Android, never for macOS (checked) | Exact versions pinned; `default-features = false` with only `wry` and `compression` |
-| tauri-plugin-dialog (planned, C) | Yes | Returns file paths only | None | Open and save dialogs only |
+| tauri-plugin-dialog 2.8.2 (Phase C) | Yes | Returns the chosen file path to Rust only | None. Its macOS tree adds `rfd` (native panels) and `tauri-plugin-fs` as a library (never registered); no networking crates (checked) | Official Tauri plugin; `gtk3` feature only affects Linux development builds |
 | age 0.12.1 (Phase B) | Yes | Encrypts and decrypts everything | None. Its macOS dependency tree (about 90 crates, including unused post-quantum and translation crates) contains no networking crates (checked) | Format spec plus Go reference implementation; its cipher crate is NCC-audited; **no audit found for the crate itself**. No optional features. |
 | @tauri-apps/api 2.12.2 (Phase B) | Yes | Carries the passphrase and ledger to and from Rust | None (zero dependencies; only `invoke` and `isTauri` are used) | Official Tauri JavaScript API, pinned to match the Rust crate |
 | pdfjs-dist (planned, D) | Yes | Reads statements | Disabled; blocked by CSP and sandbox | Reviewed in Phase D |

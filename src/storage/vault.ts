@@ -25,11 +25,15 @@ export type VaultErrorCode =
   | 'write_failed'
   | 'locked'
   | 'already_open'
+  | 'backup_unverified'
+  | 'cancelled'
+  | 'no_pending_restore'
   | 'unexpected';
 
 const KNOWN_CODES = new Set<string>([
   'no_vault', 'vault_exists', 'wrong_passphrase', 'data_damaged', 'excessive_work', 'weak_passphrase',
   'too_large', 'invalid_text', 'read_failed', 'write_failed', 'locked', 'already_open',
+  'backup_unverified', 'cancelled', 'no_pending_restore',
 ]);
 
 export class VaultError extends Error {
@@ -52,6 +56,13 @@ export interface VaultBackend {
   unlock(passphrase: string): Promise<Unlocked>;
   save(ledger: string): Promise<void>;
   lock(): Promise<void>;
+  /** Asks where to save, writes an encrypted backup (household passphrase), and checks it. */
+  backupCreate(ledger: string, date: string): Promise<void>;
+  /** Asks which backup to open and decrypts it with `passphrase`. Replaces nothing. */
+  restoreOpen(passphrase: string): Promise<string>;
+  /** Replaces the household data with the opened backup. True if the passphrase changed. */
+  restoreCommit(): Promise<{ passphraseChanged: boolean }>;
+  restoreCancel(): Promise<void>;
 }
 
 export function isStrongEnough(passphrase: string): boolean {
@@ -81,13 +92,23 @@ export function tauriBackend(): VaultBackend {
     },
     save: (ledger) => call<void>('vault_save', { ledger }),
     lock: () => call<void>('vault_lock'),
+    backupCreate: (ledger, date) => call<void>('backup_create', { ledger, date }),
+    restoreOpen: (passphrase) => call<string>('restore_open', { passphrase }),
+    restoreCommit: async () => ({ passphraseChanged: await call<boolean>('restore_commit') }),
+    restoreCancel: () => call<void>('restore_cancel'),
   };
 }
 
-/** Browser stand-in: same rules and errors as the real vault, memory only. */
+/**
+ * Browser stand-in: same rules and errors as the real vault, memory only.
+ * "Choosing a backup file" picks the last backup made in this page, or
+ * cancels if there is none.
+ */
 export function memoryBackend(): VaultBackend {
   let saved: { passphrase: string; ledger: string } | null = null;
   let unlocked = false;
+  let lastBackup: { passphrase: string; ledger: string } | null = null;
+  let pending: { passphrase: string; ledger: string } | null = null;
   return {
     persistent: false,
     status: async () => (unlocked ? 'unlocked' : saved ? 'locked' : 'none'),
@@ -109,6 +130,29 @@ export function memoryBackend(): VaultBackend {
     },
     lock: async () => {
       unlocked = false;
+      pending = null;
+    },
+    backupCreate: async (ledger) => {
+      if (!saved || !unlocked) throw new VaultError('locked');
+      lastBackup = { passphrase: saved.passphrase, ledger };
+    },
+    restoreOpen: async (passphrase) => {
+      if (saved && !unlocked) throw new VaultError('locked');
+      if (!lastBackup) throw new VaultError('cancelled');
+      if (passphrase !== lastBackup.passphrase) throw new VaultError('wrong_passphrase');
+      pending = { ...lastBackup };
+      return pending.ledger;
+    },
+    restoreCommit: async () => {
+      if (!pending) throw new VaultError('no_pending_restore');
+      const passphraseChanged = saved !== null && saved.passphrase !== pending.passphrase;
+      saved = pending;
+      pending = null;
+      unlocked = true;
+      return { passphraseChanged };
+    },
+    restoreCancel: async () => {
+      pending = null;
     },
   };
 }

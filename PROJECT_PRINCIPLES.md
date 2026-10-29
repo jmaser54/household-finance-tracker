@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-29 (v2.3: Phase B, encrypted storage)
+**Last reviewed:** 2026-10-29 (v2.4: Phase C, backup and restore)
 
 ## How to use this document
 
@@ -54,7 +54,7 @@ This applies to everything the project produces: the running app, its data files
 - Adding any network capability requires the household user's explicit approval, recorded in the change log. This includes auto-updates.
 - **Least privilege.** The app has only the permissions it needs:
   - the macOS App Sandbox, with **outgoing network connections permitted** (`network.client`) because Apple's WebKit will not display the app's own pages in a sandboxed app without it. No incoming connections (`network.server`), and no hardware or personal-data access;
-  - access only to the app's own data folder, plus files the user picks once those features exist;
+  - access only to the app's own data folder, plus a file the user picks in a save or open panel (backups);
   - a minimal Tauri capability list.
 
   See `docs/ARCHITECTURE.md` §4.
@@ -204,7 +204,7 @@ A household **spending and income tracker** for a married couple with separate a
   - Only one copy of the app may write the data at a time.
 - **Detect and handle errors.** Every failure is shown in plain language with a safe next step, and no data is lost.
 - **Backups must:**
-  - be **encrypted before they leave the app**, with a passphrase the user types when making the backup;
+  - be **encrypted before they leave the app**, with the household passphrase (decided 2026-10-29: restoring requires the household passphrase that was in use when the backup was made);
   - be saved where the user chooses;
   - include the complete dataset:
     - accounts,
@@ -371,9 +371,29 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - save, refusal while locked, wrong passphrase refused, unlock intact;
   - the data files are in the sandbox container, age-encrypted, with no plaintext marker.
 
+**Backup and restore (Phase C), verified by tests:**
+- Rust tests (`src-tauri/src/vault.rs`):
+  - backup round trip, with the file encrypted and free of plaintext;
+  - wrong passphrase refused;
+  - damaged, truncated, foreign, empty, missing and oversized backups refused;
+  - a backup from a faster Mac opens, while one demanding absurd work does not;
+  - write failure reported;
+  - making a backup never changes household data;
+  - restore keeps an encrypted copy of what it replaced, even if that data was unreadable;
+  - restore onto a new Mac;
+  - a restore interrupted at every step leaves old or restored data, never neither.
+- The pre-restore copy and the restore's atomicity were mutation-checked.
+- TypeScript and browser tests:
+  - the backup date is recorded only when a backup succeeds;
+  - wrong-passphrase, damaged, newer-version and cancelled restores replace nothing;
+  - a locked household can't be overwritten;
+  - two-step restore with a clear confirmation, from the app and from the setup screen.
+- Inside the packaged, sandboxed Mac app (macOS CI, with a fixed container file standing in for the panels): backup, wrong passphrase refused, commit without opening refused, restore, and restored data reopening intact. The backup and pre-restore files are age-encrypted with no plaintext.
+
 **Not yet implemented, so no claims may be made about these yet:**
 - changing the passphrase,
-- backup and restore,
+- reopening the pre-restore copy from within the app,
+- the real macOS save and open panels (not clickable in CI; first exercised on the household Mac),
 - PDF import,
 - categorization,
 - the dashboard over real data.
@@ -411,6 +431,12 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-29, v2.4.** Phase C: encrypted backup and restore.
+  - Backups use the household passphrase and are checked by reading them back.
+  - Two-step restore with explicit confirmation; an encrypted copy of the replaced data is kept.
+  - Entitlement `files.user-selected.read-write` added (only files picked in a panel).
+  - Tauri dialog plugin added, used only from Rust.
 
 - **2026-10-29, v2.3.** Phase B: encrypted local storage.
   - `age` passphrase mode; atomic saves that keep the previous version; fallback on unreadable files; single-writer lock.

@@ -23,6 +23,23 @@ describe('Mac app backend', () => {
     expect(invoke).toHaveBeenCalledWith('vault_unlock', { passphrase: 'pass phrase here' });
   });
 
+  it('passes backup and restore calls to the Rust commands', async () => {
+    invoke.mockResolvedValue(undefined);
+    await tauriBackend().backupCreate('{"x":1}', '2026-10-29');
+    expect(invoke).toHaveBeenCalledWith('backup_create', { ledger: '{"x":1}', date: '2026-10-29' });
+    invoke.mockResolvedValueOnce('{"y":2}');
+    await expect(tauriBackend().restoreOpen('household passphrase')).resolves.toBe('{"y":2}');
+    expect(invoke).toHaveBeenCalledWith('restore_open', { passphrase: 'household passphrase' });
+    invoke.mockResolvedValueOnce(true);
+    await expect(tauriBackend().restoreCommit()).resolves.toEqual({ passphraseChanged: true });
+    expect(invoke).toHaveBeenCalledWith('restore_commit', undefined);
+  });
+
+  it.each(['cancelled', 'backup_unverified', 'no_pending_restore'])('maps the backup error %s', async (code) => {
+    invoke.mockRejectedValueOnce(code);
+    await expect(tauriBackend().restoreOpen('x')).rejects.toMatchObject({ code });
+  });
+
   it('turns Rust error codes into VaultError codes', async () => {
     invoke.mockRejectedValueOnce('wrong_passphrase');
     await expect(tauriBackend().unlock('x')).rejects.toMatchObject({ code: 'wrong_passphrase' });

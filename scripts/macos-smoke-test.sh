@@ -7,6 +7,8 @@
 #    real UI works, with a synthetic passphrase,
 #  - encrypted saving works; saving while locked and a wrong passphrase are
 #    refused; the saved data reopens intact,
+#  - a backup can be made; a wrong passphrase cannot open it; restoring it
+#    (in this CI-only build, from a fixed file instead of the panels) works,
 #  - the data files are in the app's sandbox container, are age-encrypted, and
 #    contain no plaintext marker,
 #  - the page cannot fetch from an outside site (blocked by the CSP),
@@ -43,6 +45,14 @@ for ARCH in arm64 x86_64; do
   expect '^SMOKE probe save-locked-err-locked$' "saving while locked was not refused"
   expect '^SMOKE probe wrong-err-wrong_passphrase$' "a wrong passphrase was not refused"
   expect '^SMOKE probe unlock-ok$' "the saved change did not reopen intact"
+  expect '^SMOKE probe backup-ok$' "making a backup failed"
+  expect '^SMOKE probe restore-wrong-err-wrong_passphrase$' "a backup opened with a wrong passphrase"
+  expect '^SMOKE probe restore-commit-without-open-err-no_pending_restore$' "a restore could be committed without opening a backup"
+  expect '^SMOKE probe restore-open-ok$' "the backup did not open with the household passphrase, or its contents differed"
+  expect '^SMOKE probe restore-commit-ok$' "the restore did not complete"
+  expect '^SMOKE probe restored-ok$' "the restored data did not reopen intact"
+  expect '^SMOKE file smoke-backup.hmbackup encrypted-ok$' "the backup file is missing, not age-encrypted, or shows plaintext"
+  expect '^SMOKE file ledger.before-restore.age encrypted-ok$' "the pre-restore copy is missing, not age-encrypted, or shows plaintext"
   expect '^SMOKE data-in-container yes$' "the data folder is not inside the sandbox container"
   expect '^SMOKE file ledger.age encrypted-ok$' "ledger.age is missing, not age-encrypted, or shows plaintext"
   expect '^SMOKE file ledger.previous.age encrypted-ok$' "ledger.previous.age is missing, not age-encrypted, or shows plaintext"
@@ -52,4 +62,4 @@ for ARCH in arm64 x86_64; do
 done
 test -d "$CONTAINER" || { echo "FAIL: no sandbox container was created" >&2; ok=false; }
 [ "$ok" = true ] || exit 1
-echo "Smoke test passed (arm64 and x86_64): renders in the sandbox; encrypted storage works; outside fetch and navigation are blocked."
+echo "Smoke test passed (arm64 and x86_64): renders in the sandbox; encrypted storage, backup and restore work; outside fetch and navigation are blocked."

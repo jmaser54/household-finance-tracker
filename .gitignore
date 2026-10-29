@@ -19,6 +19,8 @@ playwright-report/
 *.PDF
 !tests/fixtures/synthetic/**/*.pdf
 *.hhbackup
+*.hmbackup
+*.age
 *.hhbackup.json
 *backup*.json
 *.csv

@@ -10,13 +10,17 @@ publish = false
 tauri-build = { version = "=2.7.2", default-features = false }
 
 [dependencies]
-# Only the webview runtime and asset compression, plus age for encryption.
-# No plugins, no devtools, nothing network-capable.
+# Only the webview runtime and asset compression, age for encryption, and the
+# dialog plugin for backup panels. No other plugins, no devtools, nothing
+# network-capable.
 # scripts/check-desktop-config.mjs enforces this.
 tauri = { version = "=2.12.2", default-features = false, features = ["wry", "compression"] }
 # Encryption: the standard age file format, passphrase (scrypt) mode only.
 # No optional features. See docs/ARCHITECTURE.md §5.
 age = { version = "=0.12.1", default-features = false }
+# Native save/open panels for backups. Used only from Rust; the window is
+# granted no dialog permissions.
+tauri-plugin-dialog = { version = "=2.8.2", default-features = false, features = ["gtk3"] } # gtk3: Linux dev builds only; no effect on macOS
 
 [features]
 # CI-only build that proves the page loads and that macOS blocks networking.

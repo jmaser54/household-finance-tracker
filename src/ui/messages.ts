@@ -19,9 +19,30 @@ const MESSAGES: Record<VaultErrorCode | LedgerFormatErrorCode, string> = {
   invalid_shape: 'The saved data is not in the expected format. Nothing was changed.',
   broken_reference: 'The saved data is inconsistent. Nothing was changed.',
   newer_version: 'This data was saved by a newer version of Household Money. Please update the app.',
+  backup_unverified:
+    "The backup couldn't be checked after saving, so it may be incomplete. Please try again, or choose another place.",
+  cancelled: 'No file was chosen.',
+  no_pending_restore: 'Please choose the backup again.',
   unexpected: 'Something unexpected went wrong. Nothing was changed.',
 };
 
-export function messageFor(code: string): string {
-  return MESSAGES[code as keyof typeof MESSAGES] ?? MESSAGES.unexpected;
+/** Wording for problems with a backup file being restored. Your current data is never touched. */
+const BACKUP_MESSAGES: Partial<Record<keyof typeof MESSAGES, string>> = {
+  wrong_passphrase:
+    "That passphrase didn't open this backup. Use the household passphrase from when the backup was made.",
+  data_damaged: "This file isn't a Household Money backup, or it's damaged. Your current data hasn't been changed.",
+  invalid_text: "This backup is damaged. Your current data hasn't been changed.",
+  not_json: "This backup is damaged. Your current data hasn't been changed.",
+  invalid_shape: "This backup isn't in the expected format. Your current data hasn't been changed.",
+  broken_reference: "This backup's contents are inconsistent, so it wasn't used. Your current data hasn't been changed.",
+  newer_version: 'This backup was made by a newer version of Household Money. Update the app, then try again.',
+  too_large: "This file is too large to be a Household Money backup. Your current data hasn't been changed.",
+  excessive_work: "This file asks for far more unlocking work than allowed, so it wasn't opened.",
+  read_failed: "The backup file couldn't be read. Your current data hasn't been changed.",
+  write_failed: "The restore couldn't be saved, so nothing was replaced. Your current data is safe.",
+};
+
+export function messageFor(code: string, context: 'backup' | 'general' = 'general'): string {
+  const key = code as keyof typeof MESSAGES;
+  return (context === 'backup' ? BACKUP_MESSAGES[key] : undefined) ?? MESSAGES[key] ?? MESSAGES.unexpected;
 }

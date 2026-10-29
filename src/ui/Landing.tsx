@@ -1,8 +1,17 @@
 import type { ComponentChildren } from 'preact';
 import { DashboardPreview } from './DashboardPreview';
+import { BackupCard } from './Backup';
 import { Header } from './Header';
 
-export function Landing({ onLock, notices }: { onLock: () => void; notices?: ComponentChildren }) {
+export function Landing({
+  onLock,
+  notices,
+  backups,
+}: {
+  onLock: () => void;
+  notices?: ComponentChildren;
+  backups: Parameters<typeof BackupCard>[0];
+}) {
   return (
     <main class="landing">
       <Header>
@@ -28,6 +37,8 @@ export function Landing({ onLock, notices }: { onLock: () => void; notices?: Com
       </section>
 
       <DashboardPreview />
+
+      <BackupCard {...backups} />
     </main>
   );
 }

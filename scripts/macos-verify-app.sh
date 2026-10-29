@@ -3,7 +3,8 @@
 #  1. it is validly (ad-hoc) signed, contains Intel and Apple Silicon code,
 #     and every part of it is compiled to run on macOS 12 Monterey,
 #  2. its entitlements are exactly App Sandbox + network.client (which WebKit
-#     needs to render; macOS therefore permits outgoing connections),
+#     needs to render; macOS therefore permits outgoing connections) +
+#     files.user-selected.read-write (only files picked in a panel),
 #  3. it contains no smoke-test code,
 #  4. when launched normally and left running, neither it nor WebKit's
 #     helper processes open any network connection,
@@ -43,8 +44,11 @@ python3 - /tmp/entitlements.plist <<'PY'
 import plistlib, sys
 ents = plistlib.load(open(sys.argv[1], "rb"))
 print(ents)
-assert ents == {"com.apple.security.app-sandbox": True, "com.apple.security.network.client": True}, \
-    "entitlements must be exactly App Sandbox + network.client"
+assert ents == {
+    "com.apple.security.app-sandbox": True,
+    "com.apple.security.network.client": True,
+    "com.apple.security.files.user-selected.read-write": True,
+}, "entitlements must be exactly App Sandbox + network.client + files.user-selected.read-write"
 PY
 
 echo "== 3. No smoke-test code in the release binary"

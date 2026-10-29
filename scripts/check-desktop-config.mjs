@@ -45,12 +45,14 @@ const plist = readFileSync('src-tauri/Entitlements.plist', 'utf8').replace(/<!--
 const keys = [...plist.matchAll(/<key>([^<]+)<\/key>\s*<(true|false)\/>/g)].map((m) => [m[1], m[2]]);
 // network.client is required by WebKit to render at all inside the sandbox
 // (Phase A finding). Nothing else is allowed, in particular not network.server.
+// files.user-selected.read-write: only files the person picks in a panel.
 const EXPECTED_ENTITLEMENTS = [
   ['com.apple.security.app-sandbox', 'true'],
   ['com.apple.security.network.client', 'true'],
+  ['com.apple.security.files.user-selected.read-write', 'true'],
 ];
 if (JSON.stringify(keys) !== JSON.stringify(EXPECTED_ENTITLEMENTS)) {
-  fail(`Entitlements must be exactly app-sandbox and network.client; found ${JSON.stringify(keys)}`);
+  fail(`Entitlements must be exactly app-sandbox, network.client and files.user-selected.read-write; found ${JSON.stringify(keys)}`);
 }
 if ((plist.match(/<key>/g) ?? []).length !== keys.length) fail('Entitlements.plist has entries this check does not understand');
 
@@ -58,9 +60,16 @@ if ((plist.match(/<key>/g) ?? []).length !== keys.length) fail('Entitlements.pli
 const cargoToml = readFileSync('src-tauri/Cargo.toml', 'utf8');
 const section = (name) => new RegExp(`^\\[${name}\\]\\s*\\n([\\s\\S]*?)(?=^\\[|$(?![\\s\\S]))`, 'm').exec(cargoToml)?.[1] ?? '';
 const depNames = (body) => [...body.matchAll(/^([A-Za-z0-9_-]+)\s*=/gm)].map((m) => m[1]);
-// tauri (the app shell) and age (encryption). Anything else needs a review
-// entry in docs/ARCHITECTURE.md §13 and an update here.
-if (JSON.stringify(depNames(section('dependencies'))) !== '["tauri","age"]') fail('the only Rust dependencies may be tauri and age');
+// tauri (the app shell), age (encryption) and tauri-plugin-dialog (backup
+// save/open panels, used from Rust only). Anything else needs a review entry
+// in docs/ARCHITECTURE.md §13 and an update here.
+if (JSON.stringify(depNames(section('dependencies'))) !== '["tauri","age","tauri-plugin-dialog"]') {
+  fail('the only Rust dependencies may be tauri, age and tauri-plugin-dialog');
+}
+const dialogLine = /^tauri-plugin-dialog\s*=\s*\{([^}]*)\}/m.exec(section('dependencies'))?.[1] ?? '';
+if (!/version\s*=\s*"=2\.8\.2"/.test(dialogLine) || !/default-features\s*=\s*false/.test(dialogLine) || !/(^|[\s,{])features\s*=\s*\["gtk3"\]/.test(dialogLine)) {
+  fail('tauri-plugin-dialog must be pinned to =2.8.2 with only the gtk3 (Linux-only) feature');
+}
 const ageLine = /^age\s*=\s*\{([^}]*)\}/m.exec(section('dependencies'))?.[1] ?? '';
 if (!/version\s*=\s*"=0\.12\.1"/.test(ageLine) || !/default-features\s*=\s*false/.test(ageLine) || /(^|[\s,{])features\s*=/.test(ageLine)) {
   fail('age must be pinned to =0.12.1 with no features');
@@ -82,8 +91,11 @@ const NETWORK_CRATES = new Set([
   'reqwest', 'ureq', 'isahc', 'curl', 'curl-sys', 'attohttpc', 'surf', 'hyper', 'hyper-util', 'h2', 'h3',
   'quinn', 'tungstenite', 'tokio-tungstenite', 'native-tls', 'rustls', 'openssl', 'openssl-sys', 'mio',
   'socket2', 'tiny_http', 'axum', 'actix-web', 'warp', 'tauri-plugin-http', 'tauri-plugin-updater',
-  'tauri-plugin-shell', 'tauri-plugin-opener', 'tauri-plugin-fs', 'tauri-plugin-websocket', 'tauri-plugin-upload',
+  'tauri-plugin-shell', 'tauri-plugin-opener', 'tauri-plugin-websocket', 'tauri-plugin-upload',
 ]);
+// tauri-plugin-fs is compiled in as a library the dialog plugin uses
+// internally. It must never be registered as a plugin (which would offer file
+// commands); checked below together with the registered plugin list.
 for (const target of ['aarch64-apple-darwin', 'x86_64-apple-darwin']) {
   let tree;
   try {
@@ -104,8 +116,16 @@ for (const target of ['aarch64-apple-darwin', 'x86_64-apple-darwin']) {
 // --- Native commands ---------------------------------------------------------
 // The window's only native capabilities. Adding one needs a review entry in
 // docs/ARCHITECTURE.md §4 and an update here.
-const ALLOWED_COMMANDS = ['vault_status', 'vault_create', 'vault_unlock', 'vault_save', 'vault_lock'];
+const ALLOWED_COMMANDS = [
+  'vault_status', 'vault_create', 'vault_unlock', 'vault_save', 'vault_lock',
+  'backup_create', 'restore_open', 'restore_commit', 'restore_cancel',
+];
 const mainRs = readFileSync('src-tauri/src/main.rs', 'utf8');
+const plugins = [...mainRs.matchAll(/\.plugin\(([^)]*\))\)/g)].map((m) => m[1].replace(/\s+/g, ''));
+if (JSON.stringify(plugins) !== JSON.stringify(['tauri_plugin_dialog::init()'])) {
+  fail(`the only registered plugin may be tauri_plugin_dialog::init(); found ${plugins.join(', ') || 'none'}`);
+}
+if (/tauri_plugin_fs/.test(mainRs + readFileSync('src-tauri/src/commands.rs', 'utf8'))) fail('tauri_plugin_fs must not be used or registered');
 const handlers = [...mainRs.matchAll(/generate_handler!\[([\s\S]*?)\]/g)];
 const registered = handlers.flatMap((m) => m[1].split(',').map((c) => c.trim().replace(/^commands::/, '')).filter(Boolean));
 if (handlers.length !== 1 || JSON.stringify(registered) !== JSON.stringify(ALLOWED_COMMANDS)) {
@@ -120,4 +140,4 @@ if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
-console.log('Desktop configuration check passed (CSP, sandbox entitlements, no plugins, no networking crates).');
+console.log('Desktop configuration check passed (CSP, entitlements, only the dialog plugin, allowed commands, no networking crates).');
