@@ -2,7 +2,7 @@
 
 Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles say *what must be true*; this file says *how*. If they disagree, the principles win and this file gets fixed.
 
-**Status (2026-10-29):** Mac app direction approved. The encryption choice (§5) and this plan await review. Nothing in §4–§12 is implemented yet unless marked *done*.
+**Status (2026-10-29):** Phases A (Mac app shell) and B (encrypted storage, lock and unlock) are implemented. Backup and restore, PDF import and the dashboard are not. Anything not marked *done* is still a plan.
 
 ## 1. Shape of the app
 
@@ -63,9 +63,10 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 - No camera, microphone, contacts, location, or automation.
 
 **Tauri:**
-- **Capabilities:** only the app's own commands (`unlock`, `lock`, `load`, `save`, `backup_create`, `backup_read`, `restore_commit`, `status`) plus the dialog plugin's open and save dialogs, which pick the backup file location.
-- **No other plugins:** no `fs`, `http`, `shell`, `opener`, `updater`, or `process`.
-- **CSP:** the existing policy, with `connect-src` limited to Tauri's own IPC channel (`ipc: http://ipc.localhost`); everything else stays `'none'`.
+- **Native commands (*done*, Phase B):** exactly five: `vault_status`, `vault_create`, `vault_unlock`, `vault_save` and `vault_lock` (`src-tauri/src/commands.rs`). The list is enforced by `check-desktop-config.mjs`. They touch only the encrypted files in the app's own container. No Tauri core or plugin permissions are granted. Phase C will add backup commands and the dialog plugin's open and save dialogs.
+- **No plugins:** no `fs`, `http`, `shell`, `opener`, `updater`, `dialog` (yet), or `process`.
+- **CSP:** unchanged and identical to `index.html`, with `connect-src 'none'` still in place. Tauri's IPC therefore uses its built-in fallback message channel instead of its `ipc://` fetch channel; verified working inside the sandboxed app in Phase B. No IPC exception was added to the policy.
+- **`freezePrototype` is off.** Preact copies its virtual-DOM nodes when re-rendering, and with `Object.prototype` frozen that copy throws, so the screen could never update (found in Phase B). The option defends against untrusted scripts, which this app never loads. The CSP and the navigation lock remain the boundary.
 - **Navigation:** navigation away from the app's bundled pages and new windows are refused in Rust. This closes the browser-era gap where a page could navigate away with data in the URL.
 - **Single window,** with developer tools disabled in release builds.
 
@@ -122,35 +123,39 @@ If you prefer the smallest dependency set, the RustCrypto option is the alternat
 - `age` has no notion of "who made this file": anyone with the passphrase can create a valid one.
 - No independent audit of the crate was found. Interoperability tests in Phase C check format compatibility, not security.
 
-**How it is used:**
-- **Data file:** `ledger.age` holds the whole ledger as JSON, encrypted with the household passphrase.
-  - Unlocking decrypts it, which takes about 1 second.
-  - The passphrase is then held only in Rust memory (zeroized on lock) so saves can re-encrypt. Saves run in the background, and rapid edits are combined into one save.
+**How it is used (*done*, Phase B; `src-tauri/src/vault.rs`, `src-tauri/src/commands.rs`):**
+- **Data file:** `ledger.age` holds the whole ledger as one JSON document, encrypted with the household passphrase.
+  - Encrypting and decrypting each take about 1 second (age calibrates scrypt per device).
+  - Files live in the app's sandbox container: `~/Library/Containers/io.github.jmaser54.householdmoney/Data/Library/Application Support/io.github.jmaser54.householdmoney/`.
   - Nothing key-related is ever written to disk.
-- **Locking:** a Lock button, after 15 minutes of inactivity (adjustable), and on quit. Locking wipes the passphrase in Rust and reloads the window, which discards all decrypted data from the page.
-- **Changing the passphrase:** the ledger is re-encrypted with the new passphrase.
-- **Passphrase guidance:** at least 12 characters. The app can suggest one made of random words. It is honest that a forgotten passphrase cannot be recovered.
+- **Passphrase in memory:** after unlocking, the passphrase is held only in Rust memory, in age's `SecretString`, which is wiped when dropped, so saves can re-encrypt.
+- **Locking:** by the Lock button, after 15 minutes without keyboard, mouse or touch activity, and by quitting. Locking drops the passphrase in Rust and reloads the window, which discards the decrypted ledger from the page.
+- **Passphrase rule:** at least 12 characters, not all spaces. This is enforced in Rust; the UI checks the same rule for friendlier messages. The setup screen says plainly that a forgotten passphrase cannot be recovered.
+- **Not yet built:** changing the passphrase, an adjustable auto-lock time, and a "suggest a passphrase" helper.
 
 ## 6. Saving safely and handling errors
 
-**Save sequence:**
-1. Validate the ledger in TypeScript (schema version, references, split sums).
-2. Encrypt to `ledger.age.tmp` and flush it to disk.
-3. Move the current file to `ledger.previous.age`.
-4. Rename the temporary file to `ledger.age`, an atomic operation on APFS.
+**Save sequence (*done*):**
+1. Validate the ledger in TypeScript (schema version, unique ids, references, whole cents, split sums). An invalid ledger is never saved.
+2. Encrypt and write `ledger.age.tmp`, then flush it to disk (`sync_all`, which Rust implements with `F_FULLFSYNC` on macOS).
+3. Keep the previous version: hard-link `ledger.age` to a temporary name, then atomically rename it to `ledger.previous.age`. There is no moment without a complete `ledger.age`.
+4. Atomically rename `ledger.age.tmp` to `ledger.age`.
 5. Flush the folder.
 
-At every step either the new or the previous complete file exists.
+A crash at any step leaves a readable `ledger.age`, old or new. This is tested by stopping a save at each step.
 
-**Loading:**
+**Opening (*done*):**
 1. Try `ledger.age`.
-2. If it is missing, truncated or corrupt, offer `ledger.previous.age` and explain what happened.
-3. If a data file exists but cannot be opened, **never** start a fresh empty ledger over it.
+2. If it can't be read, try `ledger.previous.age`. If that works, the app opens it and says so plainly. The next save then does **not** copy the unreadable file over the good previous version.
+3. If data files exist but can't be opened, the app reports it and **never** offers to start a new, empty household over them.
+4. If a file decrypts but isn't a valid ledger (for example, a newer schema), the app locks again at once, so nothing can be saved over it.
 
-**One writer:** an exclusive file lock. A second copy of the app shows "Household Money is already open".
+**One writer (*done*):** an exclusive lock on `household.lock`. A second copy of the app shows "Household Money is already open".
 
-**Errors:**
-- Rust returns fixed error codes such as `wrong_passphrase`, `file_corrupt`, `disk_full`, `newer_version` and `already_open`. The UI maps each to a friendly message and a safe next step.
+**Errors (*done*):**
+- Rust returns fixed codes: `wrong_passphrase`, `data_damaged`, `excessive_work`, `weak_passphrase`, `vault_exists`, `write_failed`, `read_failed`, `too_large`, `invalid_text`, `locked` and `already_open`. Ledger validation adds `newer_version`, `invalid_shape`, `broken_reference` and `not_json`. The UI maps each code to a friendly message.
+- Any unknown error becomes a generic message, so error text from elsewhere is never shown.
+- A wrong passphrase and a damaged key section of the file cannot be told apart; the message covers both.
 - No error text contains data, and nothing is logged.
 - After a failed save, the in-memory data is kept and the save can be retried.
 
@@ -255,8 +260,8 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **A. Mac shell** | Wrap the existing UI in Tauri; App Sandbox (with `network.client`, required by WebKit); CSP, capabilities and navigation lock; config and crate checks; macOS CI build with entitlement and socket checks; delete the Pages deploy workflow | The app opens on your Mac showing today's welcome screen, and every network check passes |
-| **B. Encrypted storage** | Passphrase setup and unlock screen, lock and auto-lock, atomic save and load, previous-version fallback, single-writer lock, error messages | Storage, interruption and lock tests pass |
+| **A. Mac shell** *(done)* | Wrap the existing UI in Tauri; App Sandbox (with `network.client`, required by WebKit); CSP, capabilities and navigation lock; config and crate checks; macOS CI build with entitlement and socket checks; delete the Pages deploy workflow | The app opens on your Mac showing today's welcome screen, and every network check passes |
+| **B. Encrypted storage** *(done)* | Passphrase setup and unlock screen, lock and auto-lock, atomic save and load, previous-version fallback, single-writer lock, error messages | Storage, interruption and lock tests pass |
 | **C. Backup and restore** | Make, check, restore and pre-restore copy; `age` interoperability tests | Backup tests pass, and a restore rehearsal works on your Mac |
 | **D. PDF import** | pdf.js, parser interface, synthetic layouts, scanned-PDF detection, review screen, diagnostics | Import tests pass |
 | **E. Dashboard** | Overview, spending and income, comparisons, drilldowns, review queue, rules from corrections | Totals traceable; tests pass |
@@ -280,8 +285,9 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 |---|---|---|---|---|
 | preact 10.29.8 | Yes | Renders it | None | Zero dependencies |
 | tauri 2.12.2, tauri-build 2.7.2 (Phase A) | Yes | Will carry IPC (no commands yet) | No network plugins. Its `reqwest` dependency is compiled only for iOS/Android, never for macOS (checked) | Exact versions pinned; `default-features = false` with only `wry` and `compression` |
-| tauri-plugin-dialog (planned, A) | Yes | Returns file paths only | None | Open and save dialogs only |
-| age 0.12.1 (planned, B; pending D3 approval) | Yes | Encrypts and decrypts everything | None | Format spec plus Go reference implementation; its cipher crate is NCC-audited; **no audit found for the crate itself** |
+| tauri-plugin-dialog (planned, C) | Yes | Returns file paths only | None | Open and save dialogs only |
+| age 0.12.1 (Phase B) | Yes | Encrypts and decrypts everything | None. Its macOS dependency tree (about 90 crates, including unused post-quantum and translation crates) contains no networking crates (checked) | Format spec plus Go reference implementation; its cipher crate is NCC-audited; **no audit found for the crate itself**. No optional features. |
+| @tauri-apps/api 2.12.2 (Phase B) | Yes | Carries the passphrase and ledger to and from Rust | None (zero dependencies; only `invoke` and `isTauri` are used) | Official Tauri JavaScript API, pinned to match the Rust crate |
 | pdfjs-dist (planned, D) | Yes | Reads statements | Disabled; blocked by CSP and sandbox | Reviewed in Phase D |
 | vite, vitest, typescript, @playwright/test, @types/node, @tauri-apps/cli | Dev only | Synthetic data only | Not shipped | — |
 

@@ -3,16 +3,20 @@ name = "household-money"
 version = "0.1.0"
 description = "Private household spending and income tracker. All data stays on this Mac."
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89" # File::try_lock (single-writer lock)
 publish = false
 
 [build-dependencies]
 tauri-build = { version = "=2.7.2", default-features = false }
 
 [dependencies]
-# Only the webview runtime and asset compression. No plugins, no devtools,
-# nothing network-capable. scripts/check-desktop-config.mjs enforces this.
+# Only the webview runtime and asset compression, plus age for encryption.
+# No plugins, no devtools, nothing network-capable.
+# scripts/check-desktop-config.mjs enforces this.
 tauri = { version = "=2.12.2", default-features = false, features = ["wry", "compression"] }
+# Encryption: the standard age file format, passphrase (scrypt) mode only.
+# No optional features. See docs/ARCHITECTURE.md §5.
+age = { version = "=0.12.1", default-features = false }
 
 [features]
 # CI-only build that proves the page loads and that macOS blocks networking.

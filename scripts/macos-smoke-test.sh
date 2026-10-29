@@ -2,8 +2,13 @@
 # CI-only (macOS). Runs the `smoke-test` build of the packaged, sandboxed app.
 # Inside the real app window it checks, and reports with fixed SMOKE lines
 # (never data), that:
-#  - the bundled page loads inside the App Sandbox,
-#  - the welcome screen actually renders (heading, preview, no error banner),
+#  - the bundled page loads inside the App Sandbox and renders (no error banner),
+#  - creating (first run) or unlocking (second run) the household through the
+#    real UI works, with a synthetic passphrase,
+#  - encrypted saving works; saving while locked and a wrong passphrase are
+#    refused; the saved data reopens intact,
+#  - the data files are in the app's sandbox container, are age-encrypted, and
+#    contain no plaintext marker,
 #  - the page cannot fetch from an outside site (blocked by the CSP),
 #  - the page cannot navigate to an outside site (refused by the app).
 # Note: the sandbox grants network.client because WebKit needs it, so macOS
@@ -30,11 +35,21 @@ for ARCH in arm64 x86_64; do
   grep '^SMOKE ' "$OUT" || echo "(no SMOKE output)"
   expect() { grep -Eq "$1" "$OUT" || { echo "FAIL [$ARCH]: $2" >&2; ok=false; }; }
   expect '^SMOKE page-loaded tauri://localhost$' "the bundled page did not load inside the sandbox"
-  expect '^SMOKE probe render-ok$' "the welcome screen did not render"
+  expect '^SMOKE probe render-ok$' "the app did not render (or showed its error banner)"
+  expect '^SMOKE probe screen-(setup|unlock)$' "neither the passphrase setup nor the unlock screen was shown"
+  expect '^SMOKE probe ui-opened$' "creating or unlocking the household through the UI did not reach the welcome screen"
+  expect '^SMOKE probe reopen-ok$' "the household did not reopen after locking"
+  expect '^SMOKE probe save-ok$' "saving failed"
+  expect '^SMOKE probe save-locked-err-locked$' "saving while locked was not refused"
+  expect '^SMOKE probe wrong-err-wrong_passphrase$' "a wrong passphrase was not refused"
+  expect '^SMOKE probe unlock-ok$' "the saved change did not reopen intact"
+  expect '^SMOKE data-in-container yes$' "the data folder is not inside the sandbox container"
+  expect '^SMOKE file ledger.age encrypted-ok$' "ledger.age is missing, not age-encrypted, or shows plaintext"
+  expect '^SMOKE file ledger.previous.age encrypted-ok$' "ledger.previous.age is missing, not age-encrypted, or shows plaintext"
   expect '^SMOKE probe fetch-blocked$' "the page was able to send a request to an outside site"
   expect '^SMOKE navigation refused https://example.com$' "navigation to an outside site was not refused"
   expect '^SMOKE probe done$' "the in-window checks did not finish"
 done
 test -d "$CONTAINER" || { echo "FAIL: no sandbox container was created" >&2; ok=false; }
 [ "$ok" = true ] || exit 1
-echo "Smoke test passed (arm64 and x86_64): renders in the sandbox; outside fetch and navigation are blocked."
+echo "Smoke test passed (arm64 and x86_64): renders in the sandbox; encrypted storage works; outside fetch and navigation are blocked."

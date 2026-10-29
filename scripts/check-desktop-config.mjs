@@ -22,7 +22,12 @@ for (const directive of ["default-src 'none'", "script-src 'self'", "connect-src
   if (!String(security.csp).includes(directive)) fail(`Tauri CSP is missing \`${directive}\``);
 }
 if (/unsafe-inline|unsafe-eval|\*/.test(String(security.csp))) fail('Tauri CSP contains unsafe-inline, unsafe-eval or a wildcard');
-if (security.freezePrototype !== true) fail('app.security.freezePrototype must be true');
+// freezePrototype stays off: Preact copies its virtual-DOM nodes (which carry
+// an own "constructor" property) when re-rendering, and with Object.prototype
+// frozen that assignment throws, so the app cannot update the screen
+// (found in Phase B). The page loads no untrusted script, which is what this
+// option defends against; the CSP and navigation lock remain the boundary.
+if (security.freezePrototype !== false) fail('app.security.freezePrototype must be false (Preact cannot re-render with it; see comment)');
 if (security.dangerousDisableAssetCspModification) fail('dangerousDisableAssetCspModification must not be set');
 if (security.assetProtocol?.enable) fail('the asset protocol (file access from the page) must stay disabled');
 if (conf.app?.withGlobalTauri !== false) fail('app.withGlobalTauri must be false');
@@ -53,7 +58,13 @@ if ((plist.match(/<key>/g) ?? []).length !== keys.length) fail('Entitlements.pli
 const cargoToml = readFileSync('src-tauri/Cargo.toml', 'utf8');
 const section = (name) => new RegExp(`^\\[${name}\\]\\s*\\n([\\s\\S]*?)(?=^\\[|$(?![\\s\\S]))`, 'm').exec(cargoToml)?.[1] ?? '';
 const depNames = (body) => [...body.matchAll(/^([A-Za-z0-9_-]+)\s*=/gm)].map((m) => m[1]);
-if (JSON.stringify(depNames(section('dependencies'))) !== '["tauri"]') fail('the only Rust dependency may be tauri in this phase');
+// tauri (the app shell) and age (encryption). Anything else needs a review
+// entry in docs/ARCHITECTURE.md §13 and an update here.
+if (JSON.stringify(depNames(section('dependencies'))) !== '["tauri","age"]') fail('the only Rust dependencies may be tauri and age');
+const ageLine = /^age\s*=\s*\{([^}]*)\}/m.exec(section('dependencies'))?.[1] ?? '';
+if (!/version\s*=\s*"=0\.12\.1"/.test(ageLine) || !/default-features\s*=\s*false/.test(ageLine) || /(^|[\s,{])features\s*=/.test(ageLine)) {
+  fail('age must be pinned to =0.12.1 with no features');
+}
 if (JSON.stringify(depNames(section('build-dependencies'))) !== '["tauri-build"]') fail('the only build dependency may be tauri-build');
 if (/^\[target\./m.test(cargoToml)) fail('platform-specific dependency sections are not allowed');
 const tauriLine = /^tauri\s*=\s*\{([^}]*)\}/m.exec(section('dependencies'))?.[1] ?? '';
@@ -88,6 +99,17 @@ for (const target of ['aarch64-apple-darwin', 'x86_64-apple-darwin']) {
   const crates = new Set(tree.split('\n').map((line) => line.split(' ')[0]).filter(Boolean));
   for (const crate of crates) if (NETWORK_CRATES.has(crate)) fail(`networking crate "${crate}" is compiled into the ${target} app`);
   if (crates.size < 10) fail(`suspiciously few crates listed for ${target}; is the dependency check working?`);
+}
+
+// --- Native commands ---------------------------------------------------------
+// The window's only native capabilities. Adding one needs a review entry in
+// docs/ARCHITECTURE.md §4 and an update here.
+const ALLOWED_COMMANDS = ['vault_status', 'vault_create', 'vault_unlock', 'vault_save', 'vault_lock'];
+const mainRs = readFileSync('src-tauri/src/main.rs', 'utf8');
+const handlers = [...mainRs.matchAll(/generate_handler!\[([\s\S]*?)\]/g)];
+const registered = handlers.flatMap((m) => m[1].split(',').map((c) => c.trim().replace(/^commands::/, '')).filter(Boolean));
+if (handlers.length !== 1 || JSON.stringify(registered) !== JSON.stringify(ALLOWED_COMMANDS)) {
+  fail(`native commands must be exactly ${ALLOWED_COMMANDS.join(', ')}; found ${registered.join(', ') || 'none'}`);
 }
 
 // --- Retired infrastructure --------------------------------------------------

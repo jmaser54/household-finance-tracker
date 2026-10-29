@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-29 (v2.1: Phase A, Mac app prototype)
+**Last reviewed:** 2026-10-29 (v2.3: Phase B, encrypted storage)
 
 ## How to use this document
 
@@ -351,9 +351,28 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
 - While running, neither the app nor WebKit's helper processes hold network connections.
 - The configuration checks (`scripts/check-desktop-config.mjs`) also run on every push.
 
+**Encrypted storage (Phase B), verified by tests:**
+- Rust storage tests (`src-tauri/src/vault.rs`, 22 tests):
+  - round trip, with the file on disk shown to be age-encrypted and free of plaintext;
+  - wrong passphrase refused;
+  - tampered body, tampered header, truncated, garbage and empty files reported as damaged, never as empty data;
+  - files demanding excessive work refused;
+  - "create" never overwrites existing data;
+  - a save interrupted at each of its four steps leaves readable data;
+  - torn temporary files ignored;
+  - write failures leave data intact;
+  - fallback to the previous version, without overwriting it afterwards;
+  - only one writer at a time.
+- These tests were mutation-checked: skipping the previous-version copy, removing the fallback, and writing directly over `ledger.age` each made tests fail.
+- TypeScript tests cover ledger validation (newer versions, bad shapes, broken references, split sums, no data in errors), error-code mapping, and the lock-again-on-invalid-data rule.
+- Browser tests cover passphrase setup (too short, mismatch), lock, wrong passphrase and unlock, using the memory-only browser stand-in.
+- Inside the packaged, sandboxed Mac app (macOS CI, Intel and Apple Silicon):
+  - creating or unlocking the household through the real UI;
+  - save, refusal while locked, wrong passphrase refused, unlock intact;
+  - the data files are in the sandbox container, age-encrypted, with no plaintext marker.
+
 **Not yet implemented, so no claims may be made about these yet:**
-- encrypted storage, lock and unlock,
-- safe saving,
+- changing the passphrase,
 - backup and restore,
 - PDF import,
 - categorization,
@@ -377,7 +396,8 @@ These remain after mitigation. The app's help text must describe them honestly.
 7. **Parser errors.** Validation and review reduce them but do not eliminate them.
 8. **Malicious PDFs** could exploit a bug in the PDF parser. The parser runs inside the app's sandbox, and the window's CSP forbids requests.
 9. **Outgoing connections are permitted by macOS.** The sandbox must allow them for WebKit to work. A malicious or buggy build, or exploited code inside the app, would therefore not be stopped by the OS from connecting out. The app's own layers and checks (§3.1) are what stand in the way.
-10. **Webview and OS components** (Apple WebKit, macOS) are outside our control. They are patched by macOS updates, so keep macOS up to date.
+10. **The passphrase passes through the app window.** It is typed into the page and handed to Rust as a JavaScript string, which cannot be wiped, so a copy may remain in WebKit's memory until it is reused. Rust's copy is wiped on lock, and locking reloads the page. Neither removes the risk of memory inspection on a compromised Mac (item 2).
+11. **Webview and OS components** (Apple WebKit, macOS) are outside our control. They are patched by macOS updates, so keep macOS up to date.
 
 ## 17. Decisions
 
@@ -391,6 +411,12 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-29, v2.3.** Phase B: encrypted local storage.
+  - `age` passphrase mode; atomic saves that keep the previous version; fallback on unreadable files; single-writer lock.
+  - Passphrase setup, unlock, Lock button and 15-minute auto-lock.
+  - Tauri's `freezePrototype` hardening turned off, because it breaks Preact's re-rendering. It guards against untrusted scripts, which the app never loads; the CSP and navigation lock are unchanged.
+  - Residual risk 10 added (passphrase in page memory).
 
 - **2026-10-29, v2.2.** Minimum macOS lowered from 13 to 12 Monterey, and the app is built universal (Intel + Apple Silicon) for the household's 2017 Intel MacBook Air. Security requirements are unchanged.
 

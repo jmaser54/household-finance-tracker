@@ -54,7 +54,7 @@ jobs:
         run: arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Smoke build (CI only, never uploaded)
         run: npx tauri build --bundles app --target universal-apple-darwin --features smoke-test --ci
-      - name: Smoke test, Intel and Apple Silicon (renders in sandbox; outside fetch and navigation blocked)
+      - name: Smoke test, Intel and Apple Silicon (renders; encrypted storage; outside fetch and navigation blocked)
         run: scripts/macos-smoke-test.sh
       - name: Release build
         run: npx tauri build --bundles app --target universal-apple-darwin --ci

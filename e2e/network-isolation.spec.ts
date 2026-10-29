@@ -1,4 +1,13 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+const PASSPHRASE = 'synthetic test passphrase';
+
+async function createHousehold(page: Page) {
+  await page.getByLabel('Passphrase', { exact: true }).fill(PASSPHRASE);
+  await page.getByLabel('Type it again').fill(PASSPHRASE);
+  await page.getByRole('button', { name: 'Create household' }).click();
+  await expect(page.getByText('Example with made-up numbers')).toBeVisible();
+}
 
 test('the app loads only its own static files and makes no other requests', async ({ page, baseURL }) => {
   const requests: string[] = [];
@@ -15,7 +24,7 @@ test('the app loads only its own static files and makes no other requests', asyn
 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Our Household Money' })).toBeVisible();
-  await expect(page.getByText('Example with made-up numbers')).toBeVisible();
+  await createHousehold(page);
   await page.waitForLoadState('networkidle');
 
   const origin = new URL(baseURL!).origin;
@@ -66,6 +75,8 @@ test('the CSP also blocks same-origin requests, so data cannot be smuggled to th
 test('the URL never changes while using the page', async ({ page }) => {
   await page.goto('/');
   const before = page.url();
+  await createHousehold(page);
   await page.getByText('Add your statements').click();
+  await page.getByRole('button', { name: 'Lock' }).click();
   expect(page.url()).toBe(before);
 });

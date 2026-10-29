@@ -9,10 +9,14 @@
 //   network.client because WebKit will not render in the sandbox without it,
 //   so macOS itself PERMITS outgoing connections; the layers above are what
 //   keep the app from making any;
-// - no Tauri plugins and no app commands exist yet, so the page has no
-//   native capabilities at all.
+// - no Tauri plugins; the page's only native capabilities are the five vault
+//   commands in commands.rs (create, unlock, save, lock, status), which read
+//   and write encrypted files in the app's own sandbox container.
 
-use tauri::{Url, WebviewWindowBuilder};
+mod commands;
+mod vault;
+
+use tauri::{Manager, Url, WebviewWindowBuilder};
 
 /// True for the app's own bundled pages. In debug builds the local Vite dev
 /// server is allowed too, so `tauri dev` works; release builds never allow it.
@@ -29,7 +33,18 @@ fn is_app_url(url: &Url) -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            commands::vault_status,
+            commands::vault_create,
+            commands::vault_unlock,
+            commands::vault_save,
+            commands::vault_lock,
+        ])
         .setup(|app| {
+            // Inside the App Sandbox this is the app's private container:
+            // ~/Library/Containers/<id>/Data/Library/Application Support/<id>
+            let data_dir = app.path().app_data_dir()?;
+            app.manage(commands::AppState::new(data_dir));
             let config = app
                 .config()
                 .app
@@ -79,9 +94,12 @@ mod smoke {
 
     /// Runs inside the real app window once the page has loaded. Reports, by
     /// attempting in-app navigations to fixed report URLs:
-    /// 1. whether the welcome screen rendered (heading, preview, no error banner),
-    /// 2. whether the CSP blocked a fetch to an outside site,
-    /// 3. then tries to navigate to an outside site, which must be refused.
+    /// 1. whether the app rendered (heading, a known screen, no error banner),
+    /// 2. creating or unlocking the household through the real UI, then the
+    ///    encrypted save / lock / wrong-passphrase / unlock round trip through
+    ///    the same commands, with a synthetic passphrase,
+    /// 3. whether the CSP blocked a fetch to an outside site,
+    /// 4. then tries to navigate to an outside site, which must be refused.
     const PROBE: &str = r#"(async () => {
       const pause = () => new Promise((resolve) => setTimeout(resolve, 400));
       const report = async (result) => { location.href = 'tauri://localhost/__smoke/' + result; await pause(); };
@@ -89,14 +107,45 @@ mod smoke {
       // wait (up to 10 s) for the welcome screen before judging the render.
       for (let i = 0; i < 50 && !document.querySelector('h1'); i++) await new Promise((r) => setTimeout(r, 200));
       const heading = document.querySelector('h1');
+      for (let i = 0; i < 50 && !document.querySelector('[data-screen], .preview'); i++) await new Promise((r) => setTimeout(r, 200));
+      const shown = document.querySelector('[data-screen]')?.getAttribute('data-screen') ?? (document.querySelector('.preview') ? 'landing' : 'none');
       const rendered = heading && heading.textContent === 'Our Household Money'
-        && document.querySelector('.preview') && document.querySelector('.upload-card')
-        && !document.getElementById('fatal-banner');
+        && shown !== 'none' && !document.getElementById('fatal-banner');
       await report(rendered ? 'render-ok' : 'render-missing'
         + '-h1' + (heading ? 1 : 0)
         + '-app' + (document.getElementById('app')?.childElementCount ?? -1)
         + '-banner' + (document.getElementById('fatal-banner') ? 1 : 0)
         + '-scripts' + document.scripts.length);
+      await report('screen-' + shown);
+
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      const outcome = async (fn) => { try { return await fn(); } catch (e) { return 'err-' + encodeURIComponent(String(e)).slice(0, 60); } };
+      const PASS = 'smoke synthetic passphrase';
+      const CANARY = 'SMOKE-CANARY-HOUSEHOLD';
+
+      // 1. Through the real UI: create the household (first run) or unlock it.
+      const type = async (input, value) => { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); await pause(); };
+      const fields = [...document.querySelectorAll('input[type=password]')];
+      for (const field of fields) await type(field, PASS);
+      document.querySelector('button[type=submit]')?.click();
+      for (let i = 0; i < 75 && !document.querySelector('.preview') && !document.querySelector('[role=alert]'); i++) await new Promise((r) => setTimeout(r, 200));
+      await report('ui-' + (document.querySelector('.preview') ? 'opened' : document.querySelector('[role=alert]') ? 'alert' : 'stuck'));
+
+      // 2. The same commands directly: save, lock, refuse, unlock.
+      await report('status-' + await outcome(() => invoke('vault_status')));
+      await outcome(() => invoke('vault_lock'));
+      const reopened = await outcome(() => invoke('vault_unlock', { passphrase: PASS }));
+      await report('reopen-' + (Array.isArray(reopened) && reopened[1] === false ? 'ok' : 'failed'));
+      const ledger = JSON.parse(reopened[0]);
+      ledger.settings.householdName = CANARY;
+      await report('save-' + await outcome(() => invoke('vault_save', { ledger: JSON.stringify(ledger) }).then(() => 'ok')));
+      await outcome(() => invoke('vault_lock'));
+      await report('save-locked-' + await outcome(() => invoke('vault_save', { ledger: '{}' }).then(() => 'saved')));
+      await report('wrong-' + await outcome(() => invoke('vault_unlock', { passphrase: 'not the smoke passphrase' }).then(() => 'opened')));
+      await report('unlock-' + await outcome(() => invoke('vault_unlock', { passphrase: PASS })
+        .then(([saved, recovered]) => (JSON.parse(saved).settings.householdName === CANARY && !recovered ? 'ok' : 'mismatch'))));
+      await outcome(() => invoke('vault_lock'));
+
       let fetchResult = 'fetch-sent';
       try { await fetch('https://example.com/', { mode: 'no-cors' }); } catch { fetchResult = 'fetch-blocked'; }
       await report(fetchResult);
@@ -132,6 +181,7 @@ mod smoke {
         let result = &url.path()[REPORT_PREFIX.len()..];
         note(&format!("probe {result}"));
         if result == "done" {
+            inspect_files(app);
             let app = app.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(1));
@@ -139,6 +189,25 @@ mod smoke {
             });
         }
         true
+    }
+
+    /// Checks the saved files from inside the sandbox: they must be age
+    /// files and must not contain the synthetic plaintext markers.
+    fn inspect_files<R: Runtime>(app: &AppHandle<R>) {
+        let Ok(dir) = app.path().app_data_dir() else {
+            return note("files no-data-dir");
+        };
+        let in_container = dir.to_string_lossy().contains("/Library/Containers/");
+        note(&format!("data-in-container {}", if in_container { "yes" } else { "no" }));
+        for name in [crate::vault::CURRENT, crate::vault::PREVIOUS] {
+            let verdict = match std::fs::read(dir.join(name)) {
+                Err(_) => "missing",
+                Ok(bytes) if !bytes.starts_with(b"age-encryption.org/v1\n-> scrypt ") => "not-age",
+                Ok(bytes) if bytes.windows(12).any(|w| w == b"SMOKE-CANARY") => "plaintext-visible",
+                Ok(_) => "encrypted-ok",
+            };
+            note(&format!("file {name} {verdict}"));
+        }
     }
 
     pub fn attach<'a, R: Runtime, M: Manager<R>>(

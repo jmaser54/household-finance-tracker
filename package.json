@@ -25,6 +25,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@tauri-apps/api": "2.12.2",
     "preact": "10.29.8"
   },
   "devDependencies": {

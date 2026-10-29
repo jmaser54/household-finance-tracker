@@ -1,15 +1,16 @@
+import type { ComponentChildren } from 'preact';
 import { DashboardPreview } from './DashboardPreview';
+import { Header } from './Header';
 
-export function Landing() {
+export function Landing({ onLock, notices }: { onLock: () => void; notices?: ComponentChildren }) {
   return (
     <main class="landing">
-      <header class="landing-header">
-        <span class="logo" aria-hidden="true">
-          🏡
-        </span>
-        <h1>Our Household Money</h1>
-        <p class="tagline">See where your money comes from and where it goes.</p>
-      </header>
+      <Header>
+        {notices}
+        <button type="button" class="lock-button" onClick={onLock}>
+          <span aria-hidden="true">🔒</span> Lock
+        </button>
+      </Header>
 
       <section class="upload-card" aria-labelledby="upload-heading" data-dropzone>
         <h2 id="upload-heading">Add your statements</h2>
@@ -21,8 +22,8 @@ export function Landing() {
           <span>Statement import is being built and is not available yet.</span>
         </div>
         <p class="privacy-note">
-          <span aria-hidden="true">🔒</span> Statements are read on this computer and stay in this browser. Nothing is
-          uploaded.
+          <span aria-hidden="true">🔒</span> Statements will be read on this Mac and saved here, encrypted with your
+          passphrase. Nothing is uploaded.
         </p>
       </section>
 

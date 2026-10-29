@@ -24,7 +24,7 @@
     ],
     "security": {
       "csp": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; manifest-src 'self'",
-      "freezePrototype": true,
+      "freezePrototype": false,
       "capabilities": []
     }
   },

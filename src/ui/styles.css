@@ -262,3 +262,117 @@ h1 {
   font-weight: 700;
   text-align: center;
 }
+
+/* Passphrase screens, Lock button and notices (Phase B). */
+.vault-screen {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+  display: grid;
+  gap: 24px;
+}
+
+.vault-card {
+  background: var(--card);
+  border: var(--outline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 24px;
+  display: grid;
+  gap: 12px;
+}
+
+.vault-card h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.vault-card p {
+  margin: 0;
+}
+
+.vault-card label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.vault-card input {
+  font: inherit;
+  font-size: 17px;
+  padding: 10px 12px;
+  border: var(--outline);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.vault-card input:focus-visible,
+.primary-button:focus-visible,
+.lock-button:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
+.hint {
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+.warning {
+  font-size: 15px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--paper);
+  border: 2px dashed var(--clay);
+}
+
+.form-error {
+  color: var(--clay);
+  font-weight: 700;
+}
+
+.primary-button,
+.lock-button {
+  font: inherit;
+  font-weight: 700;
+  border: var(--outline);
+  border-radius: 999px;
+  cursor: pointer;
+  color: #2d3a5a;
+}
+
+.primary-button {
+  font-size: 18px;
+  padding: 10px 20px;
+  background: var(--sun);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.lock-button {
+  margin-top: 12px;
+  padding: 4px 14px;
+  font-size: 15px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.notice {
+  margin: 12px auto 0;
+  max-width: 560px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 2px solid var(--ink-soft);
+  background: var(--card);
+  font-size: 15px;
+}
+
+.notice-warning {
+  border-color: var(--clay);
+  font-weight: 700;
+}
