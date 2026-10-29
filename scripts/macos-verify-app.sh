@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # CI (macOS). Verifies the release build you will install:
 #  1. it is validly (ad-hoc) signed,
-#  2. its entitlements are exactly App Sandbox and nothing else (no network),
+#  2. its entitlements are exactly App Sandbox + network.client (which WebKit
+#     needs to render; macOS therefore permits outgoing connections),
 #  3. it contains no smoke-test code,
-#  4. when launched normally, neither it nor WebKit's helper processes hold
-#     any network sockets,
+#  4. when launched normally and left running, neither it nor WebKit's
+#     helper processes open any network connection,
 #  5. a downloaded (quarantined) copy is assessed by Gatekeeper as expected
 #     for an unsigned household build, i.e. it needs "Open Anyway" once.
 set -euo pipefail
@@ -23,7 +24,8 @@ python3 - /tmp/entitlements.plist <<'PY'
 import plistlib, sys
 ents = plistlib.load(open(sys.argv[1], "rb"))
 print(ents)
-assert ents == {"com.apple.security.app-sandbox": True}, "entitlements must be exactly App Sandbox"
+assert ents == {"com.apple.security.app-sandbox": True, "com.apple.security.network.client": True}, \
+    "entitlements must be exactly App Sandbox + network.client"
 PY
 
 echo "== 3. No smoke-test code in the release binary"
@@ -31,7 +33,7 @@ if strings "$BIN" | grep -q 'SMOKE '; then echo "Release binary contains smoke-t
 
 echo "== 4. No network sockets while running"
 open -n "$APP"
-sleep 10
+sleep 20
 PID="$(pgrep -f "$BIN" | head -n 1 || true)"
 test -n "$PID" || { echo "The app is not running after launch." >&2; exit 1; }
 if lsof -nP -a -p "$PID" -i; then echo "The app holds network sockets." >&2; exit 1; fi

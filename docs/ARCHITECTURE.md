@@ -7,7 +7,7 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 ## 1. Shape of the app
 
 ```
- ┌──────────────── Household Money.app (macOS App Sandbox, no network entitlement) ────────────────┐
+ ┌─────── Household Money.app (macOS App Sandbox; outgoing connections permitted, not used) ───────┐
  │                                                                                                 │
  │  App window (Apple WebKit)                       Rust core (small)                              │
  │  ┌───────────────────────────────┐   IPC only    ┌──────────────────────────────────────────┐   │
@@ -57,8 +57,9 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 
 **macOS App Sandbox entitlements:**
 - `com.apple.security.app-sandbox` = true.
-- `com.apple.security.files.user-selected.read-write` = true: the app can touch only files you pick (PDFs, backup locations) plus its own container.
-- **No** `network.client` or `network.server` entitlement. macOS itself denies the app network access.
+- `com.apple.security.network.client` = true. **Required:** Apple's WebKit will not display even the app's own bundled page in a sandboxed app without it (Phase A finding below). This means **macOS permits outgoing connections from the app.** The app is built not to make any (no networking code, CSP, navigation lock); the OS does not block them.
+- **No** `network.server`: no incoming connections.
+- No file entitlements yet. `files.user-selected.read-write` (only files you pick) is added in the phases that open PDFs and save backups.
 - No camera, microphone, contacts, location, or automation.
 
 **Tauri:**
@@ -72,7 +73,9 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 
 **Phase A finding (2026-10-29, macOS 15 CI runner, WebKit 20621):** under the App Sandbox **without** `com.apple.security.network.client`, Apple's WebKit never starts loading the app's own bundled page. The window opens but stays empty. The same build loads normally with no sandbox, and also with sandbox plus `network.client`.
 
-This was shown by re-signing copies of one CI-only smoke build with each entitlement set (`scripts/macos-sandbox-diagnostics.sh`). So "sandbox with no network entitlement" is not achievable with a WebKit window. The shipped entitlements are unchanged until the household user decides how to proceed.
+This was shown by re-signing copies of one CI-only smoke build with each entitlement set; the one-off diagnostic script has since been removed. So "sandbox with no network entitlement" is not achievable with a WebKit window. Decided by the household user: keep the sandbox and add `network.client` only.
+
+**Second Phase A finding:** WebKit can report "page loaded" before the app's script has drawn the screen. The in-window smoke check therefore waits up to 10 seconds for the welcome screen before judging it.
 
 ## 5. Encryption (D3): options and recommendation
 
@@ -215,11 +218,13 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 | Layer | How it is checked | Where |
 |---|---|---|
 | UI code makes no requests; CSP blocks them | Existing Playwright tests, run on Chromium **and WebKit** (WebKit is the engine the Mac app uses) | CI |
-| No networking code ships | Script fails if `Cargo.lock` contains HTTP or socket client crates (`reqwest`, `ureq`, `hyper` client, `isahc`, `curl`, `attohttpc`, `tungstenite`) | CI |
-| Permissions are as listed in §4 | Script checks the Tauri config (CSP, capabilities, plugin list, devtools off) and the entitlements file (sandbox on, no network keys) | CI |
-| The built app really has those entitlements | `codesign -d --entitlements` on the built `.app` | macOS CI |
-| The running app opens no network connections | Launch the built app and confirm with `lsof -i` that neither it nor its WebKit processes hold any sockets | macOS CI |
-| Real-world check | On your Mac, run the free LuLu firewall set to block everything (or turn Wi-Fi off), use the app end to end, and confirm zero connection attempts | Manual, before go-live |
+| No networking code ships | Script fails if the **macOS** dependency tree (`cargo tree --target aarch64-apple-darwin` and `x86_64-apple-darwin`) contains HTTP or socket crates (`reqwest`, `ureq`, `hyper`, `isahc`, `curl`, `rustls`, `mio`, `socket2`, network Tauri plugins and more) | CI |
+| Permissions are as listed in §4 | Script checks the Tauri config (CSP, capabilities, plugin list, devtools off) and the entitlements file (exactly sandbox + `network.client`) | CI |
+| Inside the packaged app's real window: renders; outside fetch blocked; outside navigation refused | CI-only smoke build runs an in-window probe (`scripts/macos-smoke-test.sh`) | macOS CI |
+| The release build has exactly those entitlements, and no smoke-test code | `codesign -d --entitlements` and a binary scan (`scripts/macos-verify-app.sh`) | macOS CI |
+| The running app opens no network connections | Launch the release app and confirm with `lsof -i` that neither it nor WebKit's helper processes hold any sockets | macOS CI |
+
+**What these checks do not show:** macOS permits outgoing connections, so they cannot prove a different or compromised build would never connect. They check *this* build's code, configuration and observed behaviour. No separate firewall is required.
 
 **Storage, encryption and interruptions** (Rust `cargo test`, plus TypeScript tests):
 - **Encryption:**
@@ -250,7 +255,7 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **A. Mac shell** | Wrap the existing UI in Tauri; App Sandbox without network entitlements; CSP, capabilities and navigation lock; config and crate checks; macOS CI build with entitlement and socket checks; delete the Pages deploy workflow | The app opens on your Mac showing today's welcome screen, and every network check passes |
+| **A. Mac shell** | Wrap the existing UI in Tauri; App Sandbox (with `network.client`, required by WebKit); CSP, capabilities and navigation lock; config and crate checks; macOS CI build with entitlement and socket checks; delete the Pages deploy workflow | The app opens on your Mac showing today's welcome screen, and every network check passes |
 | **B. Encrypted storage** | Passphrase setup and unlock screen, lock and auto-lock, atomic save and load, previous-version fallback, single-writer lock, error messages | Storage, interruption and lock tests pass |
 | **C. Backup and restore** | Make, check, restore and pre-restore copy; `age` interoperability tests | Backup tests pass, and a restore rehearsal works on your Mac |
 | **D. PDF import** | pdf.js, parser interface, synthetic layouts, scanned-PDF detection, review screen, diagnostics | Import tests pass |
@@ -272,7 +277,7 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 | Package | Runtime? | Touches financial data or keys? | Network | Assurance and notes |
 |---|---|---|---|---|
 | preact 10.29.8 | Yes | Renders it | None | Zero dependencies |
-| tauri 2.x (planned, Phase A) | Yes | Carries IPC | None used; no network plugins | Version pinned in `Cargo.lock` |
+| tauri 2.12.2, tauri-build 2.7.2 (Phase A) | Yes | Will carry IPC (no commands yet) | No network plugins. Its `reqwest` dependency is compiled only for iOS/Android, never for macOS (checked) | Exact versions pinned; `default-features = false` with only `wry` and `compression` |
 | tauri-plugin-dialog (planned, A) | Yes | Returns file paths only | None | Open and save dialogs only |
 | age 0.12.1 (planned, B; pending D3 approval) | Yes | Encrypts and decrypts everything | None | Format spec plus Go reference implementation; its cipher crate is NCC-audited; **no audit found for the crate itself** |
 | pdfjs-dist (planned, D) | Yes | Reads statements | Disabled; blocked by CSP and sandbox | Reviewed in Phase D |
@@ -281,8 +286,8 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 ## 14. Household go-live checklist (before real statements)
 
 - [ ] Phases A–E are complete, and `npm run verify` plus the Rust and macOS checks pass on the build you install.
-- [ ] The built app's entitlements were shown to have the sandbox on and no network access.
-- [ ] The LuLu or Wi-Fi-off test showed no connection attempts during setup, import, backup and restore with synthetic PDFs.
+- [ ] The built app's entitlements are exactly App Sandbox + `network.client`, and the macOS CI network checks passed on the build you install.
+- [ ] Optional: the app works fully with Wi-Fi turned off.
 - [ ] The household passphrase is chosen and stored safely (for example written down at home, or in a password manager).
 - [ ] A backup was made, opened with `age -d`, and restored in a test, confirming recovery works.
 - [ ] The checksum of the installed build matches the CI output.

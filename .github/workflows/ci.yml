@@ -50,11 +50,8 @@ jobs:
         run: npm run test:e2e:webkit
       - name: Smoke build (CI only, never uploaded)
         run: npx tauri build --bundles app --features smoke-test --ci
-      - name: Smoke test (page loads in sandbox; macOS blocks network)
+      - name: Smoke test (renders in sandbox; outside fetch and navigation blocked)
         run: scripts/macos-smoke-test.sh
-      - name: Sandbox diagnostics (CI-only copies; runs only if the smoke test failed)
-        if: failure()
-        run: scripts/macos-sandbox-diagnostics.sh
       - name: Release build
         run: npx tauri build --bundles app --ci
       - name: Verify release app (signature, entitlements, sockets, Gatekeeper)

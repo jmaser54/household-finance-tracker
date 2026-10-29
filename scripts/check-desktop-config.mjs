@@ -2,7 +2,7 @@
 // (PROJECT_PRINCIPLES.md §3.1, docs/ARCHITECTURE.md §4):
 //  - the Tauri window CSP matches the strict CSP in index.html
 //  - no Tauri plugins, capabilities, updater, or devtools
-//  - App Sandbox is on and is the ONLY entitlement (no network access)
+//  - App Sandbox is on, with network.client (needed by WebKit) as the only other entitlement
 //  - no networking crates are compiled into the macOS app
 //  - the old GitHub Pages deployment stays removed
 import { execFileSync } from 'node:child_process';
@@ -37,8 +37,14 @@ if (conf.bundle?.macOS?.signingIdentity !== '-') fail('macOS signing must stay a
 // --- macOS entitlements ------------------------------------------------------
 const plist = readFileSync('src-tauri/Entitlements.plist', 'utf8').replace(/<!--[\s\S]*?-->/g, '');
 const keys = [...plist.matchAll(/<key>([^<]+)<\/key>\s*<(true|false)\/>/g)].map((m) => [m[1], m[2]]);
-if (JSON.stringify(keys) !== JSON.stringify([['com.apple.security.app-sandbox', 'true']])) {
-  fail(`Entitlements must be exactly app-sandbox=true; found ${JSON.stringify(keys)}`);
+// network.client is required by WebKit to render at all inside the sandbox
+// (Phase A finding). Nothing else is allowed, in particular not network.server.
+const EXPECTED_ENTITLEMENTS = [
+  ['com.apple.security.app-sandbox', 'true'],
+  ['com.apple.security.network.client', 'true'],
+];
+if (JSON.stringify(keys) !== JSON.stringify(EXPECTED_ENTITLEMENTS)) {
+  fail(`Entitlements must be exactly app-sandbox and network.client; found ${JSON.stringify(keys)}`);
 }
 if ((plist.match(/<key>/g) ?? []).length !== keys.length) fail('Entitlements.plist has entries this check does not understand');
 
@@ -91,4 +97,4 @@ if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
-console.log('Desktop configuration check passed (CSP, sandbox-only entitlements, no plugins, no networking crates).');
+console.log('Desktop configuration check passed (CSP, sandbox entitlements, no plugins, no networking crates).');

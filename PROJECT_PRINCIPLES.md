@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-29 (v2.0: standalone Mac app)
+**Last reviewed:** 2026-10-29 (v2.1: Phase A, Mac app prototype)
 
 ## How to use this document
 
@@ -31,7 +31,8 @@ This applies to everything the project produces: the running app, its data files
 
 - Our job is to **minimize** risk and **document what remains**. No application can promise zero risk, and we never claim one.
 - **Only make verified claims.** A claim must be true of the implementation **and verified**, for example by a test, an inspected configuration, or a firewall log.
-  - Acceptable: "This app has no network permission, and statements are read on this Mac."
+  - Acceptable: "This app contains no networking code, its window cannot send requests or leave the app, and statements are read on this Mac."
+  - Not acceptable: "macOS blocks this app from the internet". It does not: see §3.1.
   - Not acceptable: "bank-level security", "100% secure", "unhackable".
 - **A passing test is not a security audit.** That includes test vectors and interoperability tests. Say which assurance a component actually has.
 - Never call data or a backup encrypted unless encryption is implemented, applied to that file, and tested, including wrong-passphrase and tamper tests.
@@ -52,18 +53,18 @@ This applies to everything the project produces: the running app, its data files
   - No remote fonts, scripts, or update checks.
 - Adding any network capability requires the household user's explicit approval, recorded in the change log. This includes auto-updates.
 - **Least privilege.** The app has only the permissions it needs:
-  - macOS App Sandbox **without** network entitlements;
-  - access only to files the user picks plus the app's own data folder;
+  - the macOS App Sandbox, with **outgoing network connections permitted** (`network.client`) because Apple's WebKit will not display the app's own pages in a sandboxed app without it. No incoming connections (`network.server`), and no hardware or personal-data access;
+  - access only to the app's own data folder, plus files the user picks once those features exist;
   - a minimal Tauri capability list.
 
   See `docs/ARCHITECTURE.md` §4.
-- **Enforced and verified, not just intended.** Network isolation is enforced in layers:
-  - OS sandbox entitlements;
-  - Content-Security-Policy in the app window;
-  - navigation blocked to anything outside the app;
-  - no networking code or crates.
+- **No OS-level network block.** macOS **permits** this app to make outgoing connections. The app is designed and checked not to use that permission; it is not prevented from doing so by the operating system. Never describe it as OS-enforced network blocking.
+- **Enforced in the app and verified, not just intended.** The no-network rule rests on these layers:
+  - no networking code: no network crates, Tauri plugins or app commands;
+  - a Content-Security-Policy in the app window that forbids all requests;
+  - navigation refused for anything outside the app's bundled pages.
 
-  Each layer is checked by automated tests and a manual firewall test (`docs/ARCHITECTURE.md` §11).
+  Each layer is checked automatically, including inside the packaged app on macOS. The running app is also checked for open network connections (`docs/ARCHITECTURE.md` §11). These checks reduce the risk; they cannot prove that no build could ever connect (§16).
 - Bank login credentials are never requested or stored.
 
 ### 3.2 Data handling inside the app
@@ -343,9 +344,14 @@ These are the contract for every calculation. Each is covered by automated tests
 
 Tests were mutation-checked: a rule was deliberately broken and a test confirmed to fail. This was done for card-payment exclusion, multiset dedupe, and transfer ambiguity.
 
+**Desktop app (Phase A), verified in macOS CI** (`scripts/macos-smoke-test.sh`, `scripts/macos-verify-app.sh`):
+- The packaged, sandboxed app loads and renders its welcome screen.
+- Inside the real app window, a request to an outside site is blocked, and navigation to an outside site is refused.
+- The release build is ad-hoc signed with exactly two entitlements: App Sandbox and `network.client`. It contains no smoke-test code.
+- While running, neither the app nor WebKit's helper processes hold network connections.
+- The configuration checks (`scripts/check-desktop-config.mjs`) also run on every push.
+
 **Not yet implemented, so no claims may be made about these yet:**
-- the desktop app itself,
-- its sandbox and network isolation,
 - encrypted storage, lock and unlock,
 - safe saving,
 - backup and restore,
@@ -369,8 +375,9 @@ These remain after mitigation. The app's help text must describe them honestly.
 5. **A forgotten passphrase** means permanent loss of that data or backup.
 6. **Data loss** from a lost or failed Mac or deleted files. Only backups protect against it.
 7. **Parser errors.** Validation and review reduce them but do not eliminate them.
-8. **Malicious PDFs** could exploit a bug in the PDF parser. The parser runs inside the app's sandbox, with no network.
-9. **Webview and OS components** (Apple WebKit, macOS) are outside our control. They are patched by macOS updates, so keep macOS up to date.
+8. **Malicious PDFs** could exploit a bug in the PDF parser. The parser runs inside the app's sandbox, and the window's CSP forbids requests.
+9. **Outgoing connections are permitted by macOS.** The sandbox must allow them for WebKit to work. A malicious or buggy build, or exploited code inside the app, would therefore not be stopped by the OS from connecting out. The app's own layers and checks (§3.1) are what stand in the way.
+10. **Webview and OS components** (Apple WebKit, macOS) are outside our control. They are patched by macOS updates, so keep macOS up to date.
 
 ## 17. Decisions
 
@@ -384,6 +391,12 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-29, v2.1.** Phase A finding, decided by the household user.
+  - Apple's WebKit does not render in a sandboxed app without the outgoing-network entitlement, so the sandbox now grants `network.client`. macOS therefore permits outgoing connections.
+  - The no-network rule is upheld by the app's own layers: no networking code, the window CSP, and the navigation lock. Automated checks run inside the packaged app.
+  - Wording changed so it never claims OS-enforced network blocking.
+  - No separate firewall is required.
 
 - **2026-10-29, v2.0.** Architecture changed to a standalone Mac app (Tauri), approved by the household user.
   - Removed:
