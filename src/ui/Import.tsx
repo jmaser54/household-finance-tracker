@@ -14,7 +14,16 @@ import {
   type ImportResult,
   type RowStatus,
 } from '../import/plan';
+import {
+  environmentFacts,
+  fileFacts,
+  formatTechnicalDetails,
+  summarizeError,
+  type FailureStage,
+  type TechnicalDetails,
+} from '../import/failureDetails';
 import { fingerprint, readStatement, type FileOutcome } from '../import/readStatement';
+import packageInfo from '../../package.json';
 import type { LedgerDocument } from '../storage/ledger';
 import { formatDay } from './Backup';
 import { Header } from './Header';
@@ -52,6 +61,22 @@ function shortDay(iso: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/** Where and why reading failed, with no statement contents, to copy if help is needed. */
+function TechnicalDetailsPanel({ details }: { details: TechnicalDetails }) {
+  const text = formatTechnicalDetails(details, environmentFacts(packageInfo.version));
+  return (
+    <details class="diagnostics" data-technical-details={details.stage}>
+      <summary>Technical details (no statement contents)</summary>
+      <p class="hint">
+        This says which step failed and why, plus facts about the PDF file format and this Mac's web engine. It
+        contains no dates, amounts, descriptions, names or account numbers, and it never leaves this Mac unless you
+        copy it yourself.
+      </p>
+      <pre>{text}</pre>
+    </details>
+  );
+}
+
 function Diagnostics({ lines }: { lines: string[] }) {
   return (
     <details class="diagnostics">
@@ -87,23 +112,51 @@ export function ImportScreen({
 
   useEffect(() => {
     let cancelled = false;
+    const failed = (stage: FailureStage, error: unknown, bytes?: Uint8Array): FileOutcome => ({
+      status: 'unreadable',
+      details: { stage, error: summarizeError(error), ...(bytes ? { file: fileFacts(bytes) } : {}) },
+    });
+    const show = (i: number, entry: ReadFile) => {
+      if (!cancelled) setRead((current) => current.map((r, j) => (j === i ? entry : r)));
+    };
     (async () => {
-      const lib = await pdfjs();
+      // Each step records where it is, so a failure says exactly which step failed.
+      let lib: PdfJs;
+      try {
+        lib = await pdfjs();
+      } catch (error) {
+        files.forEach((file, i) => show(i, { name: file.name, outcome: failed('loading-reader', error) }));
+        return;
+      }
       for (let i = 0; i < files.length; i++) {
         const file = files[i]!;
-        let entry: ReadFile;
-        if (file.size > MAX_PDF_BYTES) entry = { name: file.name, outcome: { status: 'too_large' } };
-        else {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          const [sha256, outcome] = await Promise.all([fingerprint(bytes), readStatement(bytes, lib)]);
-          entry = { name: file.name, outcome, sha256 };
+        if (file.size > MAX_PDF_BYTES) {
+          show(i, { name: file.name, outcome: { status: 'too_large' } });
+          continue;
         }
-        if (cancelled) return;
-        setRead((current) => current.map((r, j) => (j === i ? entry : r)));
+        let bytes: Uint8Array;
+        try {
+          bytes = new Uint8Array(await file.arrayBuffer());
+        } catch (error) {
+          show(i, { name: file.name, outcome: failed('reading-file', error) });
+          continue;
+        }
+        let sha256: string;
+        try {
+          sha256 = await fingerprint(bytes);
+        } catch (error) {
+          show(i, { name: file.name, outcome: failed('fingerprint', error, bytes) });
+          continue;
+        }
+        let outcome: FileOutcome;
+        try {
+          outcome = await readStatement(bytes, lib);
+        } catch (error) {
+          outcome = failed('reading-statement', error, bytes);
+        }
+        show(i, { name: file.name, outcome, sha256 });
       }
-    })().catch(() => {
-      if (!cancelled) setRead((current) => current.map((r) => (r.outcome.status === 'reading' ? { ...r, outcome: { status: 'unreadable' } } : r)));
-    });
+    })();
     return () => {
       cancelled = true;
     };
@@ -184,6 +237,7 @@ export function ImportScreen({
               <h3>{file.name}</h3>
               <p class="form-error">{FAILURE_TEXT[reason] ?? FAILURE_TEXT.unreadable}</p>
               {outcome.status === 'unsupported' && <Diagnostics lines={outcome.diagnostics} />}
+              {outcome.status === 'unreadable' && <TechnicalDetailsPanel details={outcome.details} />}
             </section>
           );
         }

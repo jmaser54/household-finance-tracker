@@ -31,6 +31,31 @@ jobs:
       - run: npm run test:e2e
       # No screenshots, traces or reports are ever uploaded (PROJECT_PRINCIPLES.md §3.4).
 
+  safari17-webkit:
+    # The household Mac runs macOS Monterey, whose newest Safari is 17.6.
+    # Playwright 1.44 bundles WebKit 17.4, the closest automatable engine.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install Playwright 1.44.1 with WebKit 17.4 (separate from the project's Playwright)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw144"
+          npm install --prefix "$RUNNER_TEMP/pw144" --no-save --ignore-scripts playwright@1.44.1
+          "$RUNNER_TEMP/pw144/node_modules/.bin/playwright" install --with-deps webkit
+      - name: Import every synthetic statement in WebKit 17.4
+        run: |
+          npx vite preview --host 127.0.0.1 --port 4180 --strictPort &
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:4180/ >/dev/null && break; sleep 1; done
+          NODE_PATH="$RUNNER_TEMP/pw144/node_modules" node tests/compat/safari17-import.cjs
+
   macos-app:
     runs-on: macos-15
     steps:

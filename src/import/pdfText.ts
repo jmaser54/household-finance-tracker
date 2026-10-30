@@ -30,12 +30,24 @@ export interface PdfText {
 
 export type PdfReadErrorCode = 'password_protected' | 'unreadable';
 
+/**
+ * Why a PDF could not be read: a fixed code for the person, plus where it
+ * stopped and a sanitized summary of the underlying error for diagnosis
+ * (see failureDetails.ts). Never contains statement text.
+ */
 export class PdfReadError extends Error {
-  constructor(readonly code: PdfReadErrorCode) {
+  constructor(
+    readonly code: PdfReadErrorCode,
+    readonly stage: FailureStage,
+    readonly summary: ErrorSummary,
+    readonly pages?: number,
+  ) {
     super(`PDF could not be read: ${code}`);
     this.name = 'PdfReadError';
   }
 }
+
+import { summarizeError, type ErrorSummary, type FailureStage } from './failureDetails';
 
 /** The small part of the pdf.js API used here. */
 export interface PdfJs {
@@ -73,18 +85,23 @@ export const SAFE_PDFJS_OPTIONS = {
 } as const;
 
 export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfText> {
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_PDF_BYTES) throw new PdfReadError('unreadable');
-  // pdf.js may take ownership of the buffer; give it a copy.
-  const task = pdfjs.getDocument({ ...SAFE_PDFJS_OPTIONS, data: bytes.slice() });
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_PDF_BYTES) {
+    throw new PdfReadError('unreadable', 'size-limits', { name: 'SizeLimit', message: 'empty or larger than # MB' });
+  }
+  let task: ReturnType<PdfJs['getDocument']>;
   let doc: PdfDocument;
   try {
+    // pdf.js may take ownership of the buffer; give it a copy.
+    task = pdfjs.getDocument({ ...SAFE_PDFJS_OPTIONS, data: bytes.slice() });
     doc = await task.promise;
   } catch (error) {
-    const name = (error as { name?: string } | null)?.name;
-    throw new PdfReadError(name === 'PasswordException' ? 'password_protected' : 'unreadable');
+    const summary = summarizeError(error);
+    throw new PdfReadError(summary.name === 'PasswordException' ? 'password_protected' : 'unreadable', 'opening-pdf', summary);
   }
   try {
-    if (doc.numPages > MAX_PAGES) throw new PdfReadError('unreadable');
+    if (doc.numPages > MAX_PAGES) {
+      throw new PdfReadError('unreadable', 'size-limits', { name: 'PageLimit', message: 'more than # pages' }, doc.numPages);
+    }
     const lines: TextLine[] = [];
     let characterCount = 0;
     for (let n = 1; n <= doc.numPages; n++) {
@@ -98,7 +115,7 @@ export async function extractText(bytes: Uint8Array, pdfjs: PdfJs): Promise<PdfT
     return { pageCount: doc.numPages, lines, characterCount };
   } catch (error) {
     if (error instanceof PdfReadError) throw error;
-    throw new PdfReadError('unreadable');
+    throw new PdfReadError('unreadable', 'reading-text', summarizeError(error), doc.numPages);
   } finally {
     // Releases the document and its worker resources.
     await task.destroy().catch(() => undefined);
