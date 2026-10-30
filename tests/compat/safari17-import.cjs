@@ -37,7 +37,13 @@ const statements = ['checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-202
   await page.getByRole('button', { name: 'Create household' }).click();
   await page.getByText('Example with made-up numbers').waitFor();
   await page.getByTestId('statement-input').setInputFiles(statements);
-  await page.waitForFunction(() => !document.body.textContent.includes('Reading…'), null, { timeout: 60_000 });
+  // Poll with evaluate: Playwright 1.44's waitForFunction uses eval, which the app's CSP blocks.
+  for (let i = 0; ; i++) {
+    const done = await page.evaluate((n) => document.querySelectorAll('.import-card').length === n && !document.body.textContent.includes('Reading…'), statements.length);
+    if (done) break;
+    if (i >= 120) throw new Error('timed out waiting for the import to finish');
+    await new Promise((r) => setTimeout(r, 500));
+  }
   const cards = await page.locator('.import-card').evaluateAll((els) =>
     els.map((e) => ({
       name: e.querySelector('h3')?.textContent,
