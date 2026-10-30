@@ -54,7 +54,7 @@ jobs:
         run: |
           npx vite preview --host 127.0.0.1 --port 4180 --strictPort &
           for _ in $(seq 1 30); do curl -sf http://127.0.0.1:4180/ >/dev/null && break; sleep 1; done
-          NODE_PATH="$RUNNER_TEMP/pw144/node_modules" node tests/compat/safari17-import.cjs
+          PW144_DIR="$RUNNER_TEMP/pw144" node tests/compat/safari17-import.cjs
 
   macos-app:
     runs-on: macos-15

@@ -2,8 +2,14 @@
 // 1.44 bundles WebKit 17.4, close to Safari 17.6 on macOS Monterey) to check
 // the PDF reader works in the engine the household's Mac uses. Prints each
 // file's result and, for failures, the technical details (no contents).
-// Run with NODE_PATH pointing at a separate playwright@1.44.1 install.
-const { webkit } = require('playwright');
+// PW144_DIR is a separate playwright@1.44.1 install, loaded by explicit path
+// (a bare require would find the project's newer Playwright first).
+const path = require('node:path');
+const { webkit, version } = (() => {
+  const pw = require(path.join(process.env.PW144_DIR, 'node_modules', 'playwright'));
+  return { webkit: pw.webkit, version: require(path.join(process.env.PW144_DIR, 'node_modules', 'playwright', 'package.json')).version };
+})();
+if (version !== '1.44.1') throw new Error(`expected Playwright 1.44.1, got ${version}`);
 const { readdirSync } = require('node:fs');
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:4180/';
