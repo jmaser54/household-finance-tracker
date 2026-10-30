@@ -22,7 +22,9 @@ test('statements are read, reviewed and added without any network traffic', asyn
   const requests: string[] = [];
   const violations: string[] = [];
   const consoleMessages: string[] = [];
+  const workers: string[] = [];
   page.on('request', (r) => requests.push(r.url()));
+  page.on('worker', (w) => workers.push(w.url()));
   page.on('console', (m) => consoleMessages.push(`${m.type()}: ${m.text()}`));
   await page.exposeFunction('reportCspViolation', (d: string) => violations.push(d));
   await page.addInitScript(() => {
@@ -63,6 +65,10 @@ test('statements are read, reviewed and added without any network traffic', asyn
   expect(requests.filter((url) => new URL(url).origin !== origin)).toEqual([]);
   expect(violations).toEqual([]);
   expect(consoleMessages).toEqual([]);
+  // pdf.js ran in its own worker. If the worker fails to start, pdf.js falls
+  // back silently to the page itself, which hides a broken worker build.
+  expect(workers.some((url) => /\/assets\/pdf\.worker\.min-[\w-]+\.js$/.test(url))).toBe(true);
+  expect(await page.evaluate(() => 'pdfjsWorker' in globalThis)).toBe(false);
 });
 
 test('unreadable, scanned and unsupported PDFs are explained, never guessed', async ({ page }) => {

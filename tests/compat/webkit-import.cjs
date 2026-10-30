@@ -22,6 +22,8 @@ const statements = ['checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-202
   const browser = await webkit.launch();
   const page = await browser.newPage();
   const errors = [];
+  const workers = [];
+  page.on('worker', (w) => workers.push(w.url()));
   page.on('pageerror', (e) => errors.push(`${e.name}: ${e.message}`.slice(0, 200)));
   await page.goto(BASE);
   const userAgent = await page.evaluate(() => navigator.userAgent);
@@ -61,6 +63,11 @@ const statements = ['checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-202
     if (card.status !== 'parsed') ok = false;
   }
   if (errors.length) console.log('Page errors:', errors);
+  // pdf.js falls back silently to the page if its worker fails to start.
+  const workerStarted = workers.some((url) => /\/assets\/pdf\.worker\.min-[\w-]+\.js$/.test(url)) &&
+    !(await page.evaluate(() => 'pdfjsWorker' in globalThis));
+  console.log(workerStarted ? 'pdf.js worker started' : 'pdf.js worker did NOT start');
+  if (!workerStarted) ok = false;
   await browser.close();
   if (cards.length !== statements.length || !ok) {
     console.error(`WebKit ${engineVersion} could not read ${cards.filter((c) => c.status !== 'parsed').length} of ${statements.length} statements.`);

@@ -83,6 +83,8 @@ jobs:
             bash -c 'npm install --prefix /tmp/pw --no-save --ignore-scripts --silent playwright@1.22.0 && node tests/compat/webkit-import.cjs'
 
   macos-app:
+    # No download is built unless statements import in both older WebKits.
+    needs: [safari17-webkit, webkit15]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

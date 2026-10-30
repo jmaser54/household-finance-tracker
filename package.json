@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test --project=chromium",
-    "check:build": "node scripts/check-build-output.mjs",
+    "check:build": "node scripts/check-build-output.mjs && node scripts/check-engine-syntax.mjs",
     "check:repo": "node scripts/check-repo-hygiene.mjs",
     "verify": "npm run typecheck && npm test && npm run check:repo && npm run check:fixtures && npm run check:desktop && npm run test:rust && npm run build && npm run check:build && npm run test:e2e",
     "test:e2e:webkit": "playwright test --project=webkit",

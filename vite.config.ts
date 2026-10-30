@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import { defineConfig, type Plugin } from 'vite';
+import { ENGINE_FLOOR } from './scripts/engine-floor.mjs';
 
 // The strict Content-Security-Policy in index.html is what ships. The dev
 // server alone needs inline styles and a websocket for hot reload, so it gets
@@ -25,11 +26,16 @@ export default defineConfig({
     jsx: { runtime: 'automatic', importSource: 'preact' },
   },
   build: {
-    target: 'es2022',
+    // Compile down to macOS Monterey's built-in WebKit (pdf.js 6 uses class
+    // static blocks, which it cannot parse). Checked by check-engine-syntax.
+    target: ['es2022', ENGINE_FLOOR],
     sourcemap: false,
     // Keep every asset a same-origin file rather than a data: URL.
     assetsInlineLimit: 0,
   },
+  // The pdf.js worker is bundled like the app (see src/import/pdfjsApp.ts),
+  // so it gets the same target; pdf.js starts it as a module worker.
+  worker: { format: 'es' },
   test: {
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'tests/**/*.test.ts'],
     environment: 'node',

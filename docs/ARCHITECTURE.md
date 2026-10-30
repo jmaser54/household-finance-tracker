@@ -30,7 +30,7 @@ Companion to [`PROJECT_PRINCIPLES.md`](../PROJECT_PRINCIPLES.md). The principles
 
 | Choice | Decision | Why |
 |---|---|---|
-| Platform | Tauri 2, macOS 12 Monterey or later; one universal app (Intel + Apple Silicon) | Uses the Mac's own WebKit, which macOS keeps patched. The app is small and the native code is minimal. |
+| Platform | Tauri 2, macOS 12 Monterey or later; one universal app (Intel + Apple Silicon) | Uses the Mac's own WebKit, which only macOS updates patch (see PROJECT_PRINCIPLES §16, item 11). The app is small and the native code is minimal. |
 | UI | Existing Preact + Vite build | Reuse what exists; it already ships no network code and a strict CSP |
 | Logic | Existing `src/domain` (TypeScript) | Already tested; runs unchanged in the app window |
 | Storage | One encrypted file, plus the previous version | Simple and atomic, and Time Machine backs it up (encrypted) |
@@ -224,7 +224,10 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 1. You choose or drop PDFs. The bytes are read from the file in memory. **PDFs are never stored or sent anywhere**; only a SHA-256 fingerprint is kept, to recognise the same file later.
 2. pdf.js (`pdfjs-dist` 6.4.299, **legacy build**) extracts positioned text in a worker bundled with the app.
    - Options: no `eval`, no font loading, no streaming, logging limited to errors.
-   - The legacy build is used because the modern build calls JavaScript features (such as `Promise.try`) that Safari 17 on macOS Monterey lacks. The legacy build carries its own polyfills.
+   - The legacy build is used because the modern build calls JavaScript features (such as `Promise.try`) that Monterey's WebKit lacks. The legacy build carries its own polyfills.
+   - **Engine floor (found on the household Mac, 2026-10-30):** the app's window uses macOS's *built-in* WebKit, not the newer engine a Safari app update brings. On Monterey that engine predates Safari 16.4 (it has no `DecompressionStream`). pdf.js 6 uses class static blocks (Safari 16.4), so it failed to load ("SyntaxError: Unexpected token") and every PDF was reported as unreadable. The build now compiles all scripts, including the pdf.js worker (bundled via `?worker&url`, not copied as is), down to Safari 15 (`scripts/engine-floor.mjs`).
+     - `check-engine-syntax.mjs` fails the build if any shipped script uses syntax that engine lacks.
+     - CI imports every synthetic statement in WebKit 15.4 (Playwright 1.22's image) and in WebKit 17.4, and checks that pdf.js really runs in its worker (it silently falls back to the page otherwise).
    - Limits: 25 MB and 60 pages per file.
    - **WebKit finding (Phase D CI):** pdf.js's own `getTextContent()` loops over a stream with `for await`. Safari's WebKit doesn't support that, and the legacy build doesn't polyfill it, so text is read through an explicit stream reader instead. A test simulates the missing feature so this can't regress.
 3. Checks before reading: not a PDF, damaged, or password-protected files are reported as such. Fewer than 25 characters of text per page means **scanned / image-only**, which is explained and not guessed at (no OCR).

@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-29 (v2.5: Phase D, statement import)
+**Last reviewed:** 2026-10-30 (v2.6: statement import on Monterey's built-in WebKit)
 
 ## How to use this document
 
@@ -398,6 +398,8 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - balance validation, including a mismatch;
   - scanned, non-PDF, damaged and no-statement files reported, not guessed;
   - masked diagnostics that contain no values.
+- In the app's oldest engine (CI): every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
+- When a file can't be read, "Technical details (no statement contents)" names the step that failed, the error type with digits and quoted text removed, structural facts about the file and the engine's features. A test checks it contains none of the synthetic statements' values.
 - Planning and adding (`src/import/plan.test.ts`):
   - transfers and card payments paired, and excluded from totals;
   - cash withdrawals, interest, and pay suggested but flagged;
@@ -443,6 +445,8 @@ These remain after mitigation. The app's help text must describe them honestly.
 9. **Outgoing connections are permitted by macOS.** The sandbox must allow them for WebKit to work. A malicious or buggy build, or exploited code inside the app, would therefore not be stopped by the OS from connecting out. The app's own layers and checks (§3.1) are what stand in the way.
 10. **The passphrase passes through the app window.** It is typed into the page and handed to Rust as a JavaScript string, which cannot be wiped, so a copy may remain in WebKit's memory until it is reused. Rust's copy is wiped on lock, and locking reloads the page. Neither removes the risk of memory inspection on a compromised Mac (item 2).
 11. **Webview and OS components** (Apple WebKit, macOS) are outside our control. They are patched by macOS updates, so keep macOS up to date.
+    - The app uses macOS's built-in WebKit, not the Safari app's. On Monterey it is older than the household's Safari (Safari 15 generation), and Monterey no longer receives macOS updates.
+    - Mitigations: the window runs only the app's own bundled code under a strict CSP, PDFs are parsed in the sandboxed app, and nothing remote is loaded. A newer macOS, where the Mac supports it, would remove this risk.
 
 ## 17. Decisions
 
@@ -451,11 +455,17 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D1 | Dedicated web origin | **Retired 2026-10-29.** Not needed: no web hosting of the app. |
 | D2 | Passphrase lock for local data, key never stored | **Decided 2026-10-19.** Design in `docs/ARCHITECTURE.md` §5. |
 | D3 | Encryption implementation | **Decided 2026-10-29:** `age` passphrase mode (scrypt + ChaCha20-Poly1305) via its Rust crate, for the data file and backups. No custom cryptography. Verified properties and limitations in `docs/ARCHITECTURE.md` §5. Implemented in Phase B. |
-| D4 | PDF library | **Decided 2026-10-29:** pdf.js (`pdfjs-dist` 6.4.299, legacy build for Monterey's Safari 17), bundled and run in a worker inside the app with eval, font loading and streaming off. See `docs/ARCHITECTURE.md` §9 and §13. |
+| D4 | PDF library | **Decided 2026-10-29:** pdf.js (`pdfjs-dist` 6.4.299, legacy build, compiled down to Monterey's built-in WebKit), bundled and run in a worker inside the app with eval, font loading and streaming off. See `docs/ARCHITECTURE.md` §9 and §13. |
 | D5 | Platform and distribution | **Decided 2026-10-29:** Tauri, macOS only, household use. No paid signing, public distribution or auto-updates for now. |
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.6.** Statement import fixed for the household Mac. Security requirements are unchanged.
+  - Root cause: the app's window uses Monterey's built-in WebKit (older than Safari 16.4), which can't parse pdf.js 6's class static blocks, so the PDF reader never loaded.
+  - All shipped scripts, including the pdf.js worker, are now compiled down to Safari 15, enforced by a build check and by CI imports in WebKit 15.4 and 17.4.
+  - Unreadable files now show privacy-safe technical details, and one file's failure no longer marks the rest unreadable.
+  - §16 item 11 now records that Monterey's built-in WebKit no longer receives macOS updates.
 
 - **2026-10-29, v2.5.** Phase D: PDF statement import and review.
   - pdf.js (legacy build) runs in the app, with masked diagnostics.
