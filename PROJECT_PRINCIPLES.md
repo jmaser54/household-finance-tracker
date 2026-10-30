@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.6: statement import on Monterey's built-in WebKit)
+**Last reviewed:** 2026-10-30 (v2.7: combined statements, periods, card sections, stricter reconciliation)
 
 ## How to use this document
 
@@ -398,6 +398,13 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - balance validation, including a mismatch;
   - scanned, non-PDF, damaged and no-statement files reported, not guessed;
   - masked diagnostics that contain no values.
+- Layouts found on the household's first real statements, as SYNTHETIC copies (`readStatement.test.ts`, `parsers/*.test.ts`):
+  - a combined checking + savings PDF read as two accounts, each verified on its own; a mismatch in one never affects the other; an account continued on a later page; a stray row outside every account reported;
+  - a checking statement mentioning a debit card is checking, with the account's number, not the card's;
+  - every period wording listed in `docs/ARCHITECTURE.md` §9, including closing date + days in cycle; nothing guessed when the dates aren't printed;
+  - card headings printing totals and bare "PAYMENTS" headings give payments the right sign; interest-rate tables and year-to-date totals are skipped;
+  - undated interest and fee lines added on the closing date, flagged and marked for review;
+  - reconciliation fails when a row is unread, printed twice, or a payment is read as a purchase (caught by section totals even when balances happen to agree), and a row with no sign evidence is never counted.
 - In the app's oldest engine (CI): with the built-ins Monterey's WebKit lacks removed from the page and the worker, statements still import (Chromium); every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
 - When a file can't be read, "Technical details (no statement contents)" names the step that failed, the error type with digits and quoted text removed, structural facts about the file and the engine's features. A test checks it contains none of the synthetic statements' values.
 - Planning and adding (`src/import/plan.test.ts`):
@@ -405,7 +412,8 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - cash withdrawals, interest, and pay suggested but flagged;
   - a card refund linked to its purchase and reducing it;
   - identical same-day purchases both kept;
-  - the same file again adds nothing;
+  - the same file again adds nothing, including both accounts of a combined PDF;
+  - a combined PDF adds two accounts and pairs the transfer between them;
   - the overlapping day of the next month is recognised;
   - two months at once share one account;
   - rows with unknown signs are never added;
@@ -460,6 +468,15 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.7.** Fixes from the household's first real statements, investigated through masked diagnostics only. Security requirements and §10 financial rules are unchanged.
+  - A PDF holding several accounts gives one independently reconciled statement per account.
+  - Debit-card mentions no longer make a bank statement a credit card.
+  - More period wordings are recognised, still only from printed dates.
+  - Card section headings that print totals, and bare "Payments" headings, are understood. Those totals are now checked against their rows.
+  - Undated interest and fee lines are added on the closing date, flagged and marked for review.
+  - Richer masked diagnostics: per-account facts, unread lines with reasons and period candidates, still without values.
+  - No new way to accept a statement that fails its checks was added.
 
 - **2026-10-30, v2.6.** Statement import fixed for the household Mac. Security requirements are unchanged.
   - Root cause: the app's window uses Monterey's built-in WebKit (older than Safari 16.4), which can't parse pdf.js 6's class static blocks, so the PDF reader never loaded.

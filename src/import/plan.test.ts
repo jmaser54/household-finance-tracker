@@ -10,15 +10,22 @@ import type { PdfJs } from './pdfText';
 import { applyImport, planStatements, suggestAccount, type StatementInput } from './plan';
 import { readStatement } from './readStatement';
 
-const files = ['checking-2026-03.pdf', 'savings-2026-03.pdf', 'card-2026-03.pdf', 'checking-2026-04.pdf'] as const;
+const files = ['checking-2026-03.pdf', 'savings-2026-03.pdf', 'card-2026-03.pdf', 'checking-2026-04.pdf', 'card-closing-date-totals-2026-04.pdf'] as const;
 const inputs = new Map<string, StatementInput>();
+/** The accounts of the combined statement, in file order. */
+let combined: StatementInput[] = [];
 
 beforeAll(async () => {
+  const read = (name: string) => readStatement(new Uint8Array(readFileSync(`tests/fixtures/synthetic/${name}`)), pdfjs as unknown as PdfJs);
   for (const name of files) {
-    const outcome = await readStatement(new Uint8Array(readFileSync(`tests/fixtures/synthetic/${name}`)), pdfjs as unknown as PdfJs);
-    if (outcome.status !== 'parsed') throw new Error(name);
-    inputs.set(name, { fileName: name, sha256: `sha-${name}`, statement: outcome.statement });
+    const outcome = await read(name);
+    if (outcome.status !== 'parsed' || outcome.statements.length !== 1) throw new Error(name);
+    inputs.set(name, { fileName: name, sha256: `sha-${name}`, statement: outcome.statements[0]! });
   }
+  const name = 'combined-checking-savings-2026-03.pdf';
+  const outcome = await read(name);
+  if (outcome.status !== 'parsed') throw new Error(name);
+  combined = outcome.statements.map((statement) => ({ fileName: name, sha256: 'sha-combined', statement }));
 });
 
 let counter = 0;
@@ -157,5 +164,56 @@ describe('importing a month of synthetic statements', () => {
     const before = serializeLedger(ledger);
     planStatements(ledger, [{ input: inputs.get('card-2026-03.pdf')!, account: suggestAccount(ledger, inputs.get('card-2026-03.pdf')!.statement, 0) }]);
     expect(serializeLedger(ledger)).toBe(before);
+  });
+});
+
+describe('a combined statement and undated charges', () => {
+  const importCombined = (ledger: LedgerDocument) => {
+    const drafts = planStatements(ledger, combined.map((input, i) => ({ input, account: suggestAccount(ledger, input.statement, i) })));
+    const result = applyImport(ledger, drafts, options());
+    parseLedger(serializeLedger(result.ledger));
+    return { drafts, ...result };
+  };
+
+  it('one PDF adds two accounts, each with its own statement and rows, and pairs the transfer between them', () => {
+    const { ledger, statements, added } = importCombined(emptyLedger());
+    expect(statements).toBe(2);
+    expect(added).toBe(10 + 2);
+    expect(ledger.accounts.map((a) => [a.kind, a.last4])).toEqual([
+      ['checking', '4821'],
+      ['savings', '7310'],
+    ]);
+    expect(ledger.statements.map((s) => [s.fileSha256, s.fileSection, s.validation.status])).toEqual([
+      ['sha-combined', 0, 'verified'],
+      ['sha-combined', 1, 'verified'],
+    ]);
+    const [checking, savings] = ledger.accounts;
+    expect(ledger.transactions.filter((t) => t.accountId === checking!.id)).toHaveLength(10);
+    expect(ledger.transactions.filter((t) => t.accountId === savings!.id)).toHaveLength(2);
+    const [toSavings, fromChecking] = [find(ledger, 'TRANSFER TO SAVINGS')[0]!, find(ledger, 'TRANSFER FROM CHECKING')[0]!];
+    expect(toSavings.kind).toBe('transfer');
+    expect(toSavings.transferGroupId).toBe(fromChecking.transferGroupId);
+    // Neither side of the transfer is income or spending.
+    const excluded = summarize(ledger.transactions, ledger.categories, MARCH).excludedTransactionIds;
+    expect(excluded).toEqual(expect.arrayContaining([toSavings.id, fromChecking.id]));
+  });
+
+  it('importing the same combined PDF again adds nothing to either account', () => {
+    const first = importCombined(emptyLedger());
+    const again = importCombined(first.ledger);
+    expect(again.drafts.map((d) => d.alreadyImported)).toEqual([true, true]);
+    expect(again.added).toBe(0);
+  });
+
+  it('an undated interest line is added on the closing date, marked for review with the reason', () => {
+    const { drafts, ledger } = importInto(emptyLedger(), ['card-closing-date-totals-2026-04.pdf']);
+    const row = drafts[0]!.rows.find((r) => r.transaction.description === 'INTEREST CHARGE ON PURCHASES')!;
+    expect(row.status).toBe('check');
+    expect(row.reasons).toContain("No date was printed for this line, so the statement's closing date was used");
+    const interest = find(ledger, 'INTEREST CHARGE ON PURCHASES')[0]!;
+    expect(interest).toMatchObject({ postedDate: '2026-04-13', amountCents: -1_427, needsReview: true, kind: 'fee' });
+    // The card payment and the return keep their meanings.
+    expect(find(ledger, 'PAYMENT THANK YOU')[0]!.kind).toBe('card_payment');
+    expect(find(ledger, 'OUTFITTERS RETURN')[0]!.kind).toBe('refund');
   });
 });

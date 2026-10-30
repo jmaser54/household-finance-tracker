@@ -81,8 +81,9 @@ describe('real-world PDF structures (synthetic contents)', () => {
     const outcome = await readStatement(new Uint8Array(readFileSync(`${dir}/${name}`)), real);
     expect(outcome.status).toBe('parsed');
     if (outcome.status === 'parsed') {
-      expect(outcome.statement.transactions).toHaveLength(2);
-      expect(outcome.statement.validation.status).toBe('verified');
+      expect(outcome.statements).toHaveLength(1);
+      expect(outcome.statements[0]!.transactions).toHaveLength(2);
+      expect(outcome.statements[0]!.validation.status).toBe('verified');
     }
   });
 

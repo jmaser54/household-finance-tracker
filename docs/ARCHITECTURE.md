@@ -233,13 +233,26 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
    - **WebKit finding (Phase D CI):** pdf.js's own `getTextContent()` loops over a stream with `for await`. Safari's WebKit doesn't support that, and the legacy build doesn't polyfill it, so text is read through an explicit stream reader instead. A test simulates the missing feature so this can't regress.
 3. Checks before reading: not a PDF, damaged, or password-protected files are reported as such. Fewer than 25 characters of text per page means **scanned / image-only**, which is explained and not guessed at (no OCR).
 4. **Parsers** (`parsers/registry.ts`): each registered parser reads the text and the best-scoring result wins. Today there is one, `generic-table` (`parsers/generic.ts`), a general reader for the common layout of a table where rows start with a date and end with amounts:
-   - **Statement details:** the period (several common wordings and date formats), opening and closing balances, account type, and the last four digits of the account number. Nothing more of the number is kept.
+   - **Combined statements** (`parsers/accounts.ts`): a PDF with several accounts (e.g. checking and savings) is split at each account heading (a line naming the account type and number, with no date or amount). Each account is read and reconciled on its own, with its own balances and rows, so nothing in one account can affect another's checks. Its pages may continue later in the file. A dated row outside every account section is reported, never dropped.
+   - **Statement details:**
+     - **Period** (`parsers/period.ts`), only from dates printed on the statement:
+       - a printed range in common wordings and date styles (03/01/2026, 03-01-26, 2026-03-01, March 1, 2026, 1 March 2026, "March 1 - 31, 2026"), labelled on its line or the line before;
+       - or a printed opening date and closing date;
+       - or, on some cards, a closing date and the printed "Days in billing cycle".
+       - The payment due date is never used. Without one of these, the statement is "no period", not guessed.
+     - **Account type:** credit card only with wording only card statements print (minimum payment, credit limit, payment due date…). Mentions of a debit, ATM or check card are ignored, so they no longer make a checking statement a "credit card". A bank name such as "… Savings Bank" isn't an account type. If both checking and savings are named and nothing says which, the type is left for you to choose.
+     - **Number:** only the last four digits are kept, preferring the account number to a card number.
+     - Opening and closing balances, also from balance lines inside the table, dated or not.
    - **Rows:** posted date (and transaction date when two dates are printed), the description exactly as printed (with indented continuation lines joined), and the amount.
      - Short dates like "03/05" are placed in the statement period's year; statements spanning New Year work.
-   - **Money in or out**, in this order: the column (Withdrawals/Debits vs Deposits/Credits), a printed marker (minus, parentheses, CR/DR), the section heading (e.g. "Purchases", "Payments and Other Credits"), the running balance, and on cards only, "unmarked means a charge". **If none applies, the row is flagged and not added.**
+   - **Money in or out**, in this order: the column (Withdrawals/Debits vs Deposits/Credits), a printed marker (minus, parentheses, CR/DR), the section heading (e.g. "Purchases", "Payments and Other Credits", a bare "PAYMENTS"), the running balance, and on cards only, "unmarked means a charge". **If none applies, the row is flagged and not added.**
+     - A heading that prints its section's total (e.g. "Payments and Other Credits -$1,250.00") still starts the section; it is not a transaction.
+   - **Undated interest and fee lines** (e.g. "INTEREST CHARGE ON PURCHASES 14.27" with no date) are added with the statement's closing date, flagged "date assigned", and always marked for review, with the printed description and amount kept. Any other undated line with an amount is reported unread.
+   - **Not transactions:** interest-rate tables (a percentage or APR) and year-to-date totals are skipped.
    - **Validation:**
      - opening balance plus activity must equal the closing balance (for cards, the balance owed);
      - each row is checked against the running balance;
+     - each section heading that prints a total must equal the rows read under it (net or gross), which catches a row missed, counted twice or placed in the wrong section even when the balances happen to agree;
      - posted dates must fall inside the period;
      - lines that look like transactions but can't be read are counted and shown, never dropped silently.
 5. **Review** (`plan.ts`, `src/ui/Import.tsx`):
@@ -263,6 +276,10 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - **Checking** with Withdrawals / Deposits / Balance columns: multi-page, repeated headers, two-line descriptions, total lines.
 - **Savings** with one signed Amount column and a written-out period.
 - **Credit card** with section headings and transaction + posting dates, including a statement spanning New Year.
+- **Combined checking and savings** in one PDF, with an all-accounts summary, a debit-card notice and an account continued onto a second page.
+- **Credit card** whose period is a closing date plus days in the billing cycle, with totals printed in its headings, unmarked payments, an undated interest line, an interest-rate table and year-to-date totals.
+- **Credit card** with its period label and dates on separate lines ("March 14 - April 13, 2026") and bare "PAYMENTS" / "PURCHASES" headings.
+- **Checking** from a bank named "… Savings and Loan", with "For the period beginning … and ending …" and dated Beginning/Ending Balance rows.
 
 **Not supported yet:**
 - **Scanned or image-only PDFs:** there is no OCR, deliberately, so nothing is guessed.
@@ -271,7 +288,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
   - no transaction table;
   - dates printed as words in every row ("Mar 5") rather than numbers;
   - amounts split across lines;
-  - statements that print no period.
+  - statements that print no period in any of the forms above.
 - **Unmarked amounts in a single Amount column on a bank statement with no running balance:** the sign can't be determined, so those rows are flagged and not added.
 
 **Whether it reads *your* banks' statements is unknown until you try them on your Mac.** That is by design: no real statement has been seen by anyone but you.
@@ -279,7 +296,11 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 ## 10. Refining parsers without sharing statements (*done*, Phase D)
 
 - Parsers are developed against **synthetic PDFs** generated by `scripts/generate-synthetic-statements.mjs`. They mimic each layout's structure using invented data. `npm run check:fixtures` confirms the committed files match the generator.
-- When a statement can't be read, or has unread lines, the review screen offers **"Show what the app saw (all values hidden)"**. Every date, amount, number and word becomes `DATE`, `AMOUNT`, `NUMBER` or `TEXT`; only layout words such as "Balance" or "Withdrawals" remain (`src/import/diagnostics.ts`). It is shown on screen only.
+- When a statement can't be read, has unread lines or fails its balance checks, the review screen offers **"Show what the app saw (all values hidden)"** (`src/import/diagnostics.ts`), shown on screen only:
+  - every date, amount, number, month name and word becomes `DATE`, `AMOUNT`, `NUMBER`, `MONTH` or `TEXT`; only layout words such as "Balance", "Payments" or "through" remain;
+  - for each statement (each account of a combined one): its type, whether a number, opening and closing balance were found (not what they are), how the period was found, how many rows took their sign from each kind of evidence, how many dates were assigned, and the result of each check;
+  - every unread line, masked, with a reason code;
+  - when no period is found, the lines that looked like they might hold it, masked, with how many dates each held.
 - You can copy or describe that masked shape. A matching synthetic fixture and parser change can then be written without any real document leaving the Mac.
 
 ## 11. Verification and tests

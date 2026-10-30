@@ -1,15 +1,17 @@
 /**
- * Reads one chosen PDF into a statement, entirely in memory on this Mac.
- * Nothing here saves anything: saving happens only after the review screen.
+ * Reads one chosen PDF into statements (one per account it covers), entirely
+ * in memory on this Mac. Nothing here saves anything: saving happens only
+ * after the review screen.
  */
-import { maskedLayout } from './diagnostics';
+import { describeRead } from './diagnostics';
 import { fileFacts, summarizeError, type TechnicalDetails } from './failureDetails';
 import { parseWithBestParser } from './parsers/registry';
 import type { ParsedStatement, ParseFailure } from './parsers/types';
 import { extractText, looksScanned, PdfReadError, type PdfJs } from './pdfText';
 
 export type FileOutcome =
-  | { status: 'parsed'; statement: ParsedStatement; diagnostics: string[] }
+  /** One statement per account in the PDF; a combined statement gives several. */
+  | { status: 'parsed'; statements: ParsedStatement[]; diagnostics: string[] }
   | { status: 'not_pdf' | 'password_protected' | 'scanned' }
   /** `details` says where and why, without any statement contents. */
   | { status: 'unreadable'; details: TechnicalDetails }
@@ -35,9 +37,9 @@ export async function readStatement(bytes: Uint8Array, pdfjs: PdfJs): Promise<Fi
   } catch (error) {
     return { status: 'unreadable', details: { stage: 'reading-statement', error: summarizeError(error), file: fileFacts(bytes, text.pageCount) } };
   }
-  const diagnostics = maskedLayout(text.lines);
+  const diagnostics = describeRead(text, outcome);
   return outcome.ok
-    ? { status: 'parsed', statement: outcome.statement, diagnostics }
+    ? { status: 'parsed', statements: outcome.statements, diagnostics }
     : { status: 'unsupported', reason: outcome.reason, diagnostics };
 }
 

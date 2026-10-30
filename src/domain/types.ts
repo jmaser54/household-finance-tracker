@@ -150,6 +150,11 @@ export interface Statement {
   closingBalanceCents?: Cents;
   /** SHA-256 of the PDF bytes, to recognise the same file imported twice. The PDF itself is not stored. */
   fileSha256: string;
+  /**
+   * For a PDF holding several accounts (e.g. checking and savings), which
+   * account section of the file this statement is, counting from 0.
+   */
+  fileSection?: number;
   parserId: string;
   parserVersion: number;
   transactionCount: number;

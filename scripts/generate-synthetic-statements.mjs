@@ -204,6 +204,251 @@ function card({ start, end, previousCents, credits, purchases }) {
   });
 }
 
+// ---- Layout 4: combined checking + savings in one PDF -------------------------
+// An "all accounts" summary, a debit-card notice, then one section per account,
+// each with its own balances and table; checking continues onto page 2.
+function combined() {
+  return makePdf((p) => {
+    const checkingOpening = 250_000;
+    const checkingRows = [
+      { date: '03/01', description: 'PAYROLL EXAMPLE EMPLOYER INC DIRECT DEP', cents: 310_000 },
+      { date: '03/02', description: 'DEBIT CARD PURCHASE 5313 EXAMPLE GROCER', cents: -8_423 },
+      { date: '03/04', description: 'SAMPLE COFFEE CO', cents: -450 },
+      { date: '03/05', description: 'ONLINE TRANSFER TO SAVINGS XXXX7310', cents: -50_000 },
+      { date: '03/09', description: 'EXAMPLE UTILITY CO AUTOPAY', cents: -12_045 },
+      { date: '03/12', description: 'PAYMENT TO EXAMPLE CARD ENDING 5512', cents: -60_000 },
+      { date: '03/15', description: 'PAYROLL EXAMPLE EMPLOYER INC DIRECT DEP', cents: 310_000 },
+      { date: '03/18', description: 'ATM WITHDRAWAL 123 EXAMPLE ST', cents: -6_000 },
+      { date: '03/22', description: 'EXAMPLE PHARMACY', cents: -1_899 },
+      { date: '03/30', description: 'EXAMPLE STREAMING', cents: -1_549 },
+    ];
+    const savingsOpening = 1_000_000;
+    const savingsRows = [
+      { date: '03/05', description: 'ONLINE TRANSFER FROM CHECKING XXXX4821', cents: 50_000 },
+      { date: '03/31', description: 'INTEREST PAID', cents: 821 },
+    ];
+    const checkingEnding = checkingOpening + checkingRows.reduce((s, r) => s + r.cents, 0);
+    const savingsEnding = savingsOpening + savingsRows.reduce((s, r) => s + r.cents, 0);
+
+    const header = (y) => {
+      p.text(50, y, 'Date', { isBold: true });
+      p.text(95, y, 'Description', { isBold: true });
+      p.text(400, y, 'Withdrawals', { isBold: true, align: 'right' });
+      p.text(480, y, 'Deposits', { isBold: true, align: 'right' });
+      p.text(560, y, 'Balance', { isBold: true, align: 'right' });
+      return y - 16;
+    };
+    let balance;
+    const rowsOut = (y, rows) => {
+      for (const row of rows) {
+        balance += row.cents;
+        p.text(50, y, row.date);
+        p.text(95, y, row.description);
+        p.text(row.cents < 0 ? 400 : 480, y, money(row.cents), { align: 'right' });
+        p.text(560, y, money(balance), { align: 'right' });
+        y -= 14;
+      }
+      return y;
+    };
+
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Community Bank', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Combined Statement of Accounts');
+    p.text(50, (y -= 14), 'Statement Period: 03/01/2026 through 03/31/2026');
+    p.text(50, (y -= 14), 'Your Debit Card ending in 5313 now works at more ATMs.');
+    p.text(50, (y -= 22), 'Account Summary', { isBold: true });
+    p.text(50, (y -= 14), 'Everyday Checking XXXXXX4821');
+    p.text(560, y, `$${money(checkingEnding)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'Everyday Savings XXXXXX7310');
+    p.text(560, y, `$${money(savingsEnding)}`, { align: 'right' });
+
+    p.text(50, (y -= 30), 'Everyday Checking - Account ending in 4821', { isBold: true });
+    p.text(50, (y -= 16), 'Beginning Balance');
+    p.text(560, y, `$${money(checkingOpening)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'Ending Balance');
+    p.text(560, y, `$${money(checkingEnding)}`, { align: 'right' });
+    y = header(y - 22);
+    balance = checkingOpening;
+    rowsOut(y, checkingRows.slice(0, 6));
+    p.text(500, 40, 'Page 1 of 2');
+
+    p.newPage();
+    y = 750;
+    p.text(50, y, 'Everyday Checking - Account ending in 4821 (continued)', { isBold: true });
+    y = header(y - 22);
+    y = rowsOut(y, checkingRows.slice(6));
+    p.text(95, (y -= 6), 'Total Withdrawals', { isBold: true });
+    p.text(400, y, money(checkingRows.filter((r) => r.cents < 0).reduce((s, r) => s + r.cents, 0)), { align: 'right' });
+
+    p.text(50, (y -= 34), 'Everyday Savings - Account ending in 7310', { isBold: true });
+    p.text(50, (y -= 16), 'Beginning Balance');
+    p.text(560, y, `$${money(savingsOpening)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'Ending Balance');
+    p.text(560, y, `$${money(savingsEnding)}`, { align: 'right' });
+    y = header(y - 22);
+    balance = savingsOpening;
+    rowsOut(y, savingsRows);
+    p.text(500, 40, 'Page 2 of 2');
+  });
+}
+
+// ---- Layout 5: card, period from closing date + days in cycle ---------------
+// Section headings that print their totals, unmarked payments, an interest line
+// with no date, an interest-rate table and year-to-date totals.
+function cardWithTotals() {
+  return makePdf((p) => {
+    const previous = 131_250;
+    const credits = [{ trans: '03/20', post: '03/20', description: 'PAYMENT THANK YOU', cents: 125_000 }];
+    const purchases = [
+      { trans: '03/16', post: '03/17', description: 'EXAMPLE GROCER', cents: 18_240 },
+      { trans: '03/29', post: '03/30', description: 'EXAMPLE HARDWARE', cents: 9_500 },
+      { trans: '04/02', post: '04/03', description: 'EXAMPLE OUTFITTERS RETURN', cents: -3_500 },
+    ];
+    const interest = 1_427;
+    const purchaseTotal = purchases.reduce((s, r) => s + r.cents, 0); // net of the return, as printed
+    const newBalance = previous - 125_000 + purchases.reduce((s, r) => s + r.cents, 0) + interest;
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Rewards Card', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Account number ending in 9046');
+    p.text(50, (y -= 14), 'Statement Closing Date 04/13/2026');
+    p.text(300, y, 'Days in Billing Cycle 29');
+    p.text(50, (y -= 14), 'Payment Due Date 05/08/2026');
+    p.text(300, y, 'Minimum Payment Due $35.00');
+    p.text(50, (y -= 14), 'Credit Limit $8,000.00');
+    p.text(50, (y -= 22), 'Previous Balance');
+    p.text(560, y, `$${money(previous)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'New Balance');
+    p.text(560, y, `$${money(newBalance)}`, { align: 'right' });
+    y -= 26;
+    p.text(50, y, 'Trans Date', { isBold: true });
+    p.text(110, y, 'Post Date', { isBold: true });
+    p.text(170, y, 'Description', { isBold: true });
+    p.text(560, y, 'Amount', { isBold: true, align: 'right' });
+    y -= 18;
+    p.text(50, y, 'Payments and Other Credits', { isBold: true });
+    p.text(560, y, `-$${money(125_000)}`, { align: 'right' });
+    for (const row of credits) {
+      y -= 14;
+      p.text(50, y, row.trans);
+      p.text(110, y, row.post);
+      p.text(170, y, row.description);
+      p.text(560, y, money(row.cents), { align: 'right' });
+    }
+    y -= 22;
+    p.text(50, y, 'Purchases and Adjustments', { isBold: true });
+    p.text(560, y, `$${money(purchaseTotal)}`, { align: 'right' });
+    for (const row of purchases) {
+      y -= 14;
+      p.text(50, y, row.trans);
+      p.text(110, y, row.post);
+      p.text(170, y, row.description);
+      p.text(560, y, money(row.cents, { sign: true }), { align: 'right' });
+    }
+    y -= 22;
+    p.text(50, y, 'Fees Charged', { isBold: true });
+    p.text(560, y, '$0.00', { align: 'right' });
+    y -= 22;
+    p.text(50, y, 'Interest Charged', { isBold: true });
+    p.text(560, y, `$${money(interest)}`, { align: 'right' });
+    p.text(170, (y -= 14), 'INTEREST CHARGE ON PURCHASES');
+    p.text(560, y, money(interest), { align: 'right' });
+    y -= 22;
+    p.text(170, y, 'Total fees charged in 2026', { isBold: true });
+    p.text(560, y, '$0.00', { align: 'right' });
+    p.text(170, (y -= 14), 'Total interest charged in 2026', { isBold: true });
+    p.text(560, y, `$${money(interest)}`, { align: 'right' });
+    y -= 26;
+    p.text(50, y, 'Interest Charge Calculation', { isBold: true });
+    p.text(50, (y -= 14), 'Type of Balance');
+    p.text(200, y, 'Annual Percentage Rate (APR)');
+    p.text(470, y, 'Balance Subject to Interest Rate');
+    p.text(50, (y -= 14), 'Purchases');
+    p.text(200, y, '21.49% (v)');
+    p.text(470, y, '$1,103.20', { align: 'right' });
+    p.text(560, y, money(interest), { align: 'right' });
+    p.text(50, (y -= 14), 'Cash Advances');
+    p.text(200, y, '27.99% (v)');
+    p.text(470, y, '$0.00', { align: 'right' });
+    p.text(560, y, '0.00', { align: 'right' });
+  });
+}
+
+// ---- Layout 6: card, period label and dates on separate lines, bare headings --
+function cardBareHeadings() {
+  return makePdf((p) => {
+    const previous = 40_000;
+    const payment = 40_000;
+    const purchases = [
+      { date: '03/18', description: 'SAMPLE COFFEE CO', cents: 650 },
+      { date: '04/01', description: 'EXAMPLE BOOKSTORE', cents: 2_399 },
+    ];
+    const newBalance = previous - payment + purchases.reduce((s, r) => s + r.cents, 0);
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Travel Card', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Card Number XXXX XXXX XXXX 2208');
+    p.text(50, (y -= 14), 'Billing Period');
+    p.text(50, (y -= 14), 'March 14 - April 13, 2026');
+    p.text(50, (y -= 14), 'Minimum Payment Due $25.00');
+    p.text(50, (y -= 22), 'Previous Balance');
+    p.text(560, y, `$${money(previous)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'New Balance');
+    p.text(560, y, `$${money(newBalance)}`, { align: 'right' });
+    y -= 26;
+    p.text(50, y, 'Date', { isBold: true });
+    p.text(110, y, 'Description', { isBold: true });
+    p.text(560, y, 'Amount', { isBold: true, align: 'right' });
+    p.text(50, (y -= 18), 'PAYMENTS', { isBold: true });
+    p.text(50, (y -= 14), '03/25');
+    p.text(110, y, 'AUTOPAY PAYMENT RECEIVED');
+    p.text(560, y, money(payment), { align: 'right' });
+    p.text(50, (y -= 22), 'PURCHASES', { isBold: true });
+    for (const row of purchases) {
+      p.text(50, (y -= 14), row.date);
+      p.text(110, y, row.description);
+      p.text(560, y, money(row.cents), { align: 'right' });
+    }
+  });
+}
+
+// ---- Layout 7: checking, "beginning ... and ending ..." period, dated balance rows --
+function checkingWordedPeriod() {
+  return makePdf((p) => {
+    const opening = 180_000;
+    const rows = [
+      { date: '03/03', description: 'EXAMPLE GROCER', cents: -5_210 },
+      { date: '03/14', description: 'PAYROLL EXAMPLE EMPLOYER INC DIRECT DEP', cents: 220_000 },
+      { date: '03/27', description: 'CHECK 1042', cents: -30_000 },
+    ];
+    let balance = opening;
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Savings and Loan', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Basic Checking   Account number: ***6617');
+    p.text(50, (y -= 14), 'For the period beginning March 1, 2026 and ending March 31, 2026');
+    y -= 26;
+    p.text(50, y, 'Date', { isBold: true });
+    p.text(95, y, 'Description', { isBold: true });
+    p.text(480, y, 'Amount', { isBold: true, align: 'right' });
+    p.text(560, y, 'Balance', { isBold: true, align: 'right' });
+    p.text(50, (y -= 16), '03/01');
+    p.text(95, y, 'Beginning Balance');
+    p.text(560, y, money(opening), { align: 'right' });
+    for (const row of rows) {
+      balance += row.cents;
+      p.text(50, (y -= 14), row.date);
+      p.text(95, y, row.description);
+      p.text(480, y, money(row.cents, { sign: true }), { align: 'right' });
+      p.text(560, y, money(balance), { align: 'right' });
+    }
+    p.text(50, (y -= 14), '03/31');
+    p.text(95, y, 'Ending Balance');
+    p.text(560, y, money(balance), { align: 'right' });
+  });
+}
+
 // ---- Not statements ---------------------------------------------------------
 function scanned() {
   return makePdf((p) => {
@@ -259,6 +504,10 @@ const FIXTURES = {
         { trans: '01/05', post: '01/06', description: 'EXAMPLE BOOKSTORE', cents: 2_250 },
       ],
     }),
+  'combined-checking-savings-2026-03.pdf': combined,
+  'card-closing-date-totals-2026-04.pdf': cardWithTotals,
+  'card-bare-headings-2026-04.pdf': cardBareHeadings,
+  'checking-worded-period-2026-03.pdf': checkingWordedPeriod,
   'scanned-image-only.pdf': scanned,
   'not-a-statement-letter.pdf': letter,
 };

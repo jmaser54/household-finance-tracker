@@ -107,3 +107,23 @@ test('rows can be left out, and cancelling adds nothing', async ({ page }) => {
   await expect(page.getByText('This statement was already added')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add 2 transactions' })).toBeEnabled();
 });
+
+test('a combined checking and savings PDF is reviewed as two accounts; an undated interest line is flagged', async ({ page }) => {
+  await createHousehold(page);
+  await choose(page, ['combined-checking-savings-2026-03.pdf', 'card-closing-date-totals-2026-04.pdf']);
+  await expect(page.getByRole('heading', { name: 'combined-checking-savings-2026-03.pdf · account 1 of 2' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'combined-checking-savings-2026-03.pdf · account 2 of 2' })).toBeVisible();
+  await expect(page.getByText('Checking ending 4821 · March 1, 2026 to March 31, 2026')).toBeVisible();
+  await expect(page.getByText('Savings ending 7310 · March 1, 2026 to March 31, 2026')).toBeVisible();
+  await expect(page.getByText('Credit card ending 9046 · March 16, 2026 to April 13, 2026')).toBeVisible();
+  await expect(page.locator('[data-validation="verified"]')).toHaveCount(3);
+  await expect(page.getByText("No date was printed for this line, so the statement's closing date was used")).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add 17 transactions' }).click();
+  await expect(page.getByText(/Added 17 transactions from 3 statements\./)).toBeVisible();
+
+  // The same combined PDF again: both of its accounts are recognised as already added.
+  await choose(page, ['combined-checking-savings-2026-03.pdf']);
+  await expect(page.getByText('This statement was already added')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Add 0 transactions' })).toBeDisabled();
+});

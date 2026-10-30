@@ -82,8 +82,9 @@ function Diagnostics({ lines }: { lines: string[] }) {
     <details class="diagnostics">
       <summary>Show what the app saw (all values hidden)</summary>
       <p class="hint">
-        Dates, amounts, numbers and words are replaced by DATE, AMOUNT, NUMBER and TEXT. Only layout words like
-        "Balance" remain. This is shown here only and never leaves this Mac.
+        Dates, amounts, numbers, month names and words are replaced by DATE, AMOUNT, NUMBER, MONTH and TEXT. Only
+        layout words like "Balance" remain, plus fixed facts about how each statement was read (no balances, no
+        account numbers). This is shown here only and never leaves this Mac.
       </p>
       <pre>{lines.join('\n')}</pre>
     </details>
@@ -104,9 +105,10 @@ export function ImportScreen({
   onConfirm: (result: ImportResult) => Promise<string | null>;
 }) {
   const [read, setRead] = useState<ReadFile[]>(files.map((f) => ({ name: f.name, outcome: { status: 'reading' } })));
-  const [choices, setChoices] = useState<Map<number, AccountChoice>>(new Map());
+  // Keyed by statement: "<file index>:<account section>", as one PDF can hold several accounts.
+  const [choices, setChoices] = useState<Map<string, AccountChoice>>(new Map());
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [acceptedFailures, setAcceptedFailures] = useState<Set<number>>(new Set());
+  const [acceptedFailures, setAcceptedFailures] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,24 +167,26 @@ export function ImportScreen({
   const parsedIndexes = read.flatMap((r, i) => (r.outcome.status === 'parsed' ? [i] : []));
   const reading = read.some((r) => r.outcome.status === 'reading');
 
-  const drafts: (DraftStatement & { fileIndex: number })[] = useMemo(() => {
-    const inputs = parsedIndexes.map((i, n) => {
-      const file = read[i]!;
-      const statement = (file.outcome as { statement: ParsedStatement }).statement;
-      return {
-        input: { fileName: file.name, sha256: file.sha256!, statement },
-        account: choices.get(i) ?? suggestAccount(ledger, statement, n),
-      };
+  const drafts: (DraftStatement & { fileIndex: number; key: string })[] = useMemo(() => {
+    const entries = parsedIndexes.flatMap((fileIndex) => {
+      const file = read[fileIndex]!;
+      const statements = (file.outcome as { statements: ParsedStatement[] }).statements;
+      return statements.map((statement, section) => ({ fileIndex, key: `${fileIndex}:${section}`, file, statement }));
     });
+    const inputs = entries.map(({ key, file, statement }, n) => ({
+      input: { fileName: file.name, sha256: file.sha256!, statement },
+      account: choices.get(key) ?? suggestAccount(ledger, statement, n),
+    }));
     return planStatements(ledger, inputs).map((draft, n) => {
-      const fileIndex = parsedIndexes[n]!;
-      const blocked = draft.input.statement.validation.status === 'failed' && !acceptedFailures.has(fileIndex);
+      const { fileIndex, key } = entries[n]!;
+      const blocked = draft.input.statement.validation.status === 'failed' && !acceptedFailures.has(key);
       return {
         ...draft,
         fileIndex,
+        key,
         rows: draft.rows.map((row, r) => ({
           ...row,
-          include: row.include && !blocked && !excluded.has(`${fileIndex}:${r}`),
+          include: row.include && !blocked && !excluded.has(`${key}:${r}`),
         })),
       };
     });
@@ -191,7 +195,7 @@ export function ImportScreen({
   const toAdd = drafts.reduce((n, d) => n + d.rows.filter((r) => r.include).length, 0);
   const missingNames = drafts.some((d) => d.account.type === 'new' && d.account.displayName.trim() === '');
 
-  const setChoice = (fileIndex: number, choice: AccountChoice) => setChoices((m) => new Map(m).set(fileIndex, choice));
+  const setChoice = (key: string, choice: AccountChoice) => setChoices((m) => new Map(m).set(key, choice));
   const toggleRow = (key: string) =>
     setExcluded((s) => {
       const next = new Set(s);
@@ -241,27 +245,28 @@ export function ImportScreen({
             </section>
           );
         }
-        const draft = drafts.find((d) => d.fileIndex === fileIndex)!;
-        return (
-          <StatementCard
-            key={fileIndex}
-            ledger={ledger}
-            draft={draft}
-            diagnostics={outcome.diagnostics}
-            fileName={file.name}
-            onChoice={(choice) => setChoice(fileIndex, choice)}
-            acceptedFailure={acceptedFailures.has(fileIndex)}
-            onAcceptFailure={(accepted) =>
-              setAcceptedFailures((s) => {
-                const next = new Set(s);
-                if (accepted) next.add(fileIndex);
-                else next.delete(fileIndex);
-                return next;
-              })
-            }
-            onToggleRow={(r) => toggleRow(`${fileIndex}:${r}`)}
-          />
-        );
+        return drafts
+          .filter((d) => d.fileIndex === fileIndex)
+          .map((draft) => (
+            <StatementCard
+              key={draft.key}
+              ledger={ledger}
+              draft={draft}
+              diagnostics={outcome.diagnostics}
+              fileName={file.name}
+              onChoice={(choice) => setChoice(draft.key, choice)}
+              acceptedFailure={acceptedFailures.has(draft.key)}
+              onAcceptFailure={(accepted) =>
+                setAcceptedFailures((s) => {
+                  const next = new Set(s);
+                  if (accepted) next.add(draft.key);
+                  else next.delete(draft.key);
+                  return next;
+                })
+              }
+              onToggleRow={(r) => toggleRow(`${draft.key}:${r}`)}
+            />
+          ));
       })}
 
       <section class="import-footer">
@@ -310,9 +315,13 @@ function StatementCard({
   const status = s.validation.status;
   const overlaps = overlapsWithLedger(ledger, draft);
 
+  const part = s.section ? ` · account ${s.section.index + 1} of ${s.section.of}` : '';
   return (
-    <section class="import-card" data-file-status="parsed">
-      <h3>{fileName}</h3>
+    <section class="import-card" data-file-status="parsed" data-validation={status}>
+      <h3>
+        {fileName}
+        {part}
+      </h3>
       <p class="statement-facts">
         {KIND_LABEL[s.accountKind ?? 'checking']}
         {s.last4 ? ` ending ${s.last4}` : ''} · {formatDay(s.periodStart)} to {formatDay(s.periodEnd)}
@@ -326,7 +335,7 @@ function StatementCard({
             const value = e.currentTarget.value;
             if (value === 'new') {
               const kind = s.accountKind ?? 'checking';
-              onChoice({ type: 'new', key: `manual:${fileName}`, displayName: `${KIND_LABEL[kind]}${s.last4 ? ` ending ${s.last4}` : ''}`, kind, ...(s.last4 ? { last4: s.last4 } : {}) });
+              onChoice({ type: 'new', key: `manual:${fileName}:${s.section?.index ?? 0}`, displayName: `${KIND_LABEL[kind]}${s.last4 ? ` ending ${s.last4}` : ''}`, kind, ...(s.last4 ? { last4: s.last4 } : {}) });
             } else onChoice({ type: 'existing', accountId: value });
           }}
         >
@@ -435,7 +444,7 @@ function StatementCard({
           })}
         </tbody>
       </table>
-      {s.unreadLines.length > 0 && <Diagnostics lines={diagnostics} />}
+      {(s.unreadLines.length > 0 || status === 'failed') && <Diagnostics lines={diagnostics} />}
     </section>
   );
 }

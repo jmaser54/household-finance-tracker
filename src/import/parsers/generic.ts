@@ -10,18 +10,21 @@
  * in (e.g. "Purchases", "Payments and Other Credits"), the running balance,
  * and finally, on credit cards only, the convention that an unmarked amount
  * is a charge. A row with no evidence is flagged and not added.
+ *
+ * A combined statement is split into its accounts first (accounts.ts); each
+ * is read and reconciled on its own.
  */
-import { addDays, isIsoDate } from '../../domain/dates';
+import { addDays } from '../../domain/dates';
 import { MoneyParseError, parseAmountToCents, sumCents, type Cents } from '../../domain/money';
 import type { AccountKind, IsoDate, StatementValidation } from '../../domain/types';
 import type { PdfText, TextLine, TextPiece } from '../pdfText';
-import type { ParsedStatement, ParsedTransaction, ParseOutcome, RowFlag, StatementParser } from './types';
+import { findAccountKind, findLast4, splitAccounts, type AccountSection } from './accounts';
+import { findPeriod, parseFullDate, type Period, type PeriodSource } from './period';
+import type { ParsedStatement, ParsedTransaction, ParseOutcome, RowFlag, SignSource, StatementParser, UnreadReason } from './types';
 
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const NUMERIC_DATE = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AMOUNT = /^\(?[-+]?\$?\s?-?[\d,]*\d\.\d{2}\)?(?:\s?-|\s?CR|\s?DR)?$/i;
-const DATE_IN_TEXT = /\b(?:\d{1,2}\/\d{1,2}\/(?:\d{4}|\d{2})|\d{4}-\d{2}-\d{2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4})\b/gi;
 
 type ColumnType = 'debit' | 'credit' | 'amount' | 'balance';
 interface Column {
@@ -37,38 +40,33 @@ const COLUMN_LABELS: [RegExp, ColumnType][] = [
   [/^amount( \(\$\))?$/i, 'amount'],
 ];
 
+// Section headings. On a bank statement a heading names its section anywhere
+// in a short line with no figures; one that prints a figure (its total) must be
+// exactly a known heading. On a card, headings must be exactly a known heading.
 const CREDIT_SECTION = /\b(deposits|additions|credits|money in|interest (paid|earned))\b/i;
 const DEBIT_SECTION =
-  /\b(withdrawals|subtractions|debits|purchases|checks paid|fees|interest charged|money out|electronic payments|card transactions|cash advances)\b/i;
+  /\b(withdrawals|subtractions|debits|purchases|checks paid|fees|interest charged|money out|electronic payments|card transactions|cash advances|payments)\b/i;
+const BANK_HEADING =
+  /^((electronic |other |atm and debit card )?(deposits?|additions|credits|withdrawals?|subtractions|debits|transactions)( and (other )?(deposits|additions|credits|withdrawals|subtractions|debits))?|checks( paid)?|(service )?fees( and charges)?|electronic payments)$/;
+/** On a card, payments, credits, refunds and returns all lower the balance owed. */
+const CARD_CREDIT_WORDS = /\b(payments?|credits?|refunds?|returns?)\b/i;
+const CARD_CREDIT_HEADING =/^(payments?|(other )?credits?|refunds?|returns?)( (and )?(other )?(payments?|credits?|adjustments|refunds?|returns?))*$/;
+const CARD_DEBIT_HEADING =
+  /^((new |other )?(purchases?|charges)|(other )?debits|fees( charged)?|interest( charged| charges?)?|cash advances?|balance transfers?)( (and )?(other )?(purchases?|charges|debits|adjustments|fees( charged)?|interest( charged)?|cash advances?|balance transfers?))*$/;
+
+/** Undated lines that are charges (interest, fees): added on the closing date and flagged. */
+const UNDATED_CHARGE = /\b(interest|fees?|finance charge|late charge|annual fee)\b/i;
+/** Undated lines that are summaries, not transactions: interest-rate tables and year-to-date totals. */
+const SUMMARY_LINE = /\d%|\bAPR\b|\b(19|20)\d{2}\b|year[- ]to[- ]date|\bYTD\b/i;
+
+const OPENING_LABEL = /^(beginning|opening|previous|starting) balance\b/i;
+const CLOSING_LABEL = /^(ending|closing|new) balance\b/i;
 
 // ---- Small parsing helpers ----------------------------------------------------
 
-function iso(year: number, month: number, day: number): IsoDate | null {
-  const value = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  return isIsoDate(value) ? value : null;
-}
-
-/** Parses a full date ("03/01/2026", "03/01/26", "2026-03-01", "March 1, 2026"). */
-export function parseFullDate(text: string): IsoDate | null {
-  const t = text.trim().replace(/,/g, '');
-  const numeric = NUMERIC_DATE.exec(t);
-  if (numeric?.[3]) {
-    const year = numeric[3].length === 2 ? 2000 + Number(numeric[3]) : Number(numeric[3]);
-    return iso(year, Number(numeric[1]), Number(numeric[2]));
-  }
-  const isoMatch = ISO_DATE.exec(t);
-  if (isoMatch) return iso(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
-  const words = /^([a-z]{3,9})\.? (\d{1,2}) (\d{4})$/i.exec(t);
-  if (words) {
-    const month = MONTHS.indexOf(words[1]!.slice(0, 3).toLowerCase()) + 1;
-    if (month > 0) return iso(Number(words[3]), month, Number(words[2]));
-  }
-  return null;
-}
-
 /** A row date token ("03/05", "03/05/26", "2026-03-05"), placed within the period. */
-function parseRowDate(token: string, period: { start: IsoDate; end: IsoDate }): IsoDate | null {
-  const full = parseFullDate(token);
+function parseRowDate(token: string, period: Period): IsoDate | null {
+  const full = NUMERIC_DATE.exec(token)?.[3] || ISO_DATE.test(token) ? parseFullDate(token) : null;
   if (full) return full;
   const short = NUMERIC_DATE.exec(token);
   if (!short || short[3]) return null;
@@ -80,7 +78,7 @@ function parseRowDate(token: string, period: { start: IsoDate; end: IsoDate }): 
   const from = addDays(period.start, -31);
   const to = addDays(period.end, 31);
   for (const year of new Set([endYear, startYear, endYear + 1, startYear - 1])) {
-    const candidate = iso(year, month, day);
+    const candidate = parseFullDate(`${month}/${day}/${year}`);
     if (candidate && candidate >= from && candidate <= to) return candidate;
   }
   return null;
@@ -114,6 +112,9 @@ function readAmount(text: string): PrintedAmount | null {
     throw error;
   }
 }
+
+const signed = (amount: PrintedAmount): Cents =>
+  amount.marker === 'negative' || amount.marker === 'credit' ? -amount.absCents : amount.absCents;
 
 /** Splits leading date tokens from the first text pieces (e.g. "03/01 PAYROLL..." in one piece). */
 function leadingDates(pieces: TextPiece[]): { dates: string[]; rest: TextPiece[] } {
@@ -180,15 +181,27 @@ function columnFor(piece: TextPiece, columns: Column[]): Column | null {
   return best && bestDistance <= 45 ? best : null;
 }
 
-// ---- Statement details --------------------------------------------------------
-
-function findPeriod(lines: TextLine[]): { start: IsoDate; end: IsoDate } | null {
-  for (const line of lines) {
-    if (!/(period|statement dates?|opening\/closing|closing date|billing cycle|from)/i.test(line.text)) continue;
-    if (!/(-|–|—|\bto\b|\bthrough\b|\bthru\b)/i.test(line.text)) continue;
-    const found = [...line.text.matchAll(DATE_IN_TEXT)].map((m) => parseFullDate(m[0])).filter((d): d is IsoDate => d !== null);
-    if (found.length >= 2 && found[0]! <= found[1]!) return { start: found[0]!, end: found[1]! };
+/** A section heading, and whether its rows are money in or out. `text` excludes any printed total. */
+function sectionHeading(text: string, isCard: boolean, hasFigure: boolean): 'credit' | 'debit' | null {
+  const t = text
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/\(\s*\d+\s*\)|\(continued\)|\bcontinued\b|[,:.]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (t === '' || t.split(' ').length > 7) return null;
+  if (isCard) {
+    if (CARD_CREDIT_HEADING.test(t)) return 'credit';
+    if (CARD_DEBIT_HEADING.test(t)) return 'debit';
+    // Without a figure, a short line naming a section still starts it, as before.
+    if (hasFigure || /\d/.test(text)) return null;
+    if (CARD_CREDIT_WORDS.test(t)) return 'credit';
+    if (DEBIT_SECTION.test(t)) return 'debit';
+    return null;
   }
+  if (hasFigure ? !BANK_HEADING.test(t) : /\d/.test(text)) return null;
+  if (CREDIT_SECTION.test(t)) return 'credit';
+  if (DEBIT_SECTION.test(t)) return 'debit';
   return null;
 }
 
@@ -197,158 +210,187 @@ function labelledAmount(lines: TextLine[], label: RegExp): Cents | undefined {
     if (!label.test(line.text)) continue;
     const piece = [...line.pieces].reverse().find((p) => isAmount(p.text));
     const amount = piece && readAmount(piece.text);
-    if (amount) return amount.marker === 'negative' || amount.marker === 'credit' ? -amount.absCents : amount.absCents;
+    if (amount) return signed(amount);
   }
   return undefined;
 }
 
-function findAccountKind(text: string): AccountKind | undefined {
-  if (/credit card|minimum payment|credit limit|card ending/i.test(text)) return 'credit_card';
-  if (/\bsavings\b/i.test(text)) return 'savings';
-  if (/\bchecking\b/i.test(text)) return 'checking';
-  return undefined;
+// ---- Reading one account ------------------------------------------------------
+
+interface SectionTotal {
+  printedCents: Cents;
+  rows: (ParsedTransaction & { printedBalance?: Cents })[];
 }
 
-/** Only the last four digits of an account or card number are ever kept. */
-export function findLast4(text: string): string | undefined {
-  const patterns = [
-    /(?:account|card)[^\n\d]{0,30}?(?:ending in|ending|number|no\.?|#)\s*:?\s*(?:[x*•.\-\s]*?)(\d[\d\s-]{2,})/i,
-    /[x*•]{3,}[\s-]*(\d{4})\b/i,
-  ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(text);
-    const digits = match?.[1]?.replace(/\D/g, '');
-    if (digits && digits.length >= 4) return digits.slice(-4);
+interface ReadAccount {
+  statement: Omit<ParsedStatement, 'parserId' | 'parserVersion' | 'section'>;
+  score: number;
+}
+
+function readAccount(all: TextLine[], section: AccountSection, period: Period, periodSource: PeriodSource): ReadAccount {
+  const lines = section.lines.map((i) => all[i]!);
+  const firstHeader = lines.findIndex((line) => findHeader(line) !== null);
+  const metadataLines = firstHeader >= 0 ? lines.slice(0, firstHeader) : lines.slice(0, 15);
+  const metadata = metadataLines.map((l) => l.text).join('\n');
+  const accountKind: AccountKind | undefined = section.kind ?? findAccountKind(metadata);
+  const last4 = section.last4 ?? findLast4(metadata, accountKind);
+  let openingBalanceCents = labelledAmount(metadataLines, OPENING_LABEL);
+  let closingBalanceCents = labelledAmount(metadataLines, CLOSING_LABEL);
+  const isCard = accountKind === 'credit_card';
+
+  let columns: Column[] = [];
+  let inTable = false;
+  let section_: 'credit' | 'debit' | null = null;
+  let sectionTotal: SectionTotal | null = null;
+  const sectionTotals: SectionTotal[] = [];
+  let previousBalance: Cents | undefined = isCard ? undefined : openingBalanceCents;
+  let descriptionX = Infinity;
+  const transactions: (ParsedTransaction & { printedBalance?: Cents })[] = [];
+  const unreadLines: number[] = [];
+  const unreadReasons: UnreadReason[] = [];
+  const signSources: Partial<Record<SignSource, number>> = {};
+  const unread = (lineIndex: number, reason: UnreadReason) => {
+    unreadLines.push(section.lines[lineIndex]!);
+    unreadReasons.push(reason);
+  };
+
+  lines.forEach((line, index) => {
+    const header = findHeader(line);
+    if (header) {
+      columns = header;
+      inTable = true;
+      section_ = null;
+      sectionTotal = null;
+      const description = line.pieces.find((p) => /description|transaction|details/i.test(p.text));
+      if (description) descriptionX = description.x0;
+      return;
+    }
+    if (!inTable && transactions.length === 0 && !isDateToken(line.pieces[0]?.text.split(/\s+/)[0] ?? '')) return;
+    if (/^(total|subtotal)\b/i.test(line.text) || /^page \d+ (of \d+)?$/i.test(line.text)) return;
+
+    const { dates, rest: afterDates } = leadingDates(line.pieces);
+    const { amounts, rest: middle } = trailingAmounts(afterDates);
+    const description = middle.map((p) => p.text).join(' ').trim();
+
+    // Balance lines inside the table ("Beginning balance", dated or not) are not transactions.
+    if (OPENING_LABEL.test(description) || CLOSING_LABEL.test(description)) {
+      const last = amounts[amounts.length - 1];
+      const amount = last && readAmount(last.text);
+      if (amount && OPENING_LABEL.test(description) && openingBalanceCents === undefined) {
+        openingBalanceCents = signed(amount);
+        if (!isCard && transactions.length === 0) previousBalance = openingBalanceCents;
+      }
+      if (amount && CLOSING_LABEL.test(description) && closingBalanceCents === undefined) closingBalanceCents = signed(amount);
+      return;
+    }
+
+    if (dates.length === 0) {
+      if (amounts.length === 0) {
+        // The second line of the previous row's description (indented under
+        // the description column), or else a section heading.
+        const previous = transactions[transactions.length - 1];
+        if (previous && line.pieces[0]!.x0 >= descriptionX - 2 && line.page === all[previous.line]!.page) {
+          previous.description += ` ${line.text}`;
+          return;
+        }
+        const heading = sectionHeading(description, isCard, false);
+        if (heading) {
+          section_ = heading;
+          sectionTotal = null;
+        }
+        return;
+      }
+      // A heading that prints its section's total, e.g. "Payments and Other Credits -1,234.56".
+      const heading = amounts.length === 1 ? sectionHeading(description, isCard, true) : null;
+      const printedTotal = heading ? readAmount(amounts[0]!.text) : null;
+      if (heading && printedTotal) {
+        section_ = heading;
+        sectionTotal = { printedCents: printedTotal.absCents, rows: [] };
+        sectionTotals.push(sectionTotal);
+        return;
+      }
+      if (!inTable) return;
+      if (SUMMARY_LINE.test(description)) return;
+      if (amounts.length === 1 && readAmount(amounts[0]!.text)?.absCents === 0) return; // e.g. "Fee waived 0.00"
+      if (amounts.length === 1 && description !== '' && UNDATED_CHARGE.test(description)) {
+        addRow(index, period.end, null, description, amounts, ['date_assigned']);
+        return;
+      }
+      unread(index, 'no_date');
+      return;
+    }
+
+    // Rows: dates first, amounts last, a description in between.
+    const posted = parseRowDate(dates.length === 2 ? dates[1]! : dates[0]!, period);
+    const transactionDate = dates.length === 2 ? parseRowDate(dates[0]!, period) : null;
+    if (!posted || amounts.length === 0 || description === '') {
+      if (amounts.length > 0 || inTable) unread(index, !posted ? 'date_not_in_period' : amounts.length === 0 ? 'no_amount' : 'no_description');
+      return;
+    }
+    addRow(index, posted, transactionDate, description, amounts, []);
+  });
+
+  function addRow(index: number, posted: IsoDate, transactionDate: IsoDate | null, description: string, amounts: TextPiece[], flags: RowFlag[]) {
+    let amountPiece: TextPiece | undefined;
+    let amountColumn: Column | null = null;
+    let printedBalance: Cents | undefined;
+    for (const piece of amounts) {
+      const column = columns.length ? columnFor(piece, columns) : null;
+      if (column?.type === 'balance' || (!columns.length && amounts.length > 1 && piece === amounts[amounts.length - 1])) {
+        const balance = readAmount(piece.text);
+        if (balance) printedBalance = balance.marker === 'negative' ? -balance.absCents : balance.absCents;
+      } else if (!amountPiece) {
+        amountPiece = piece;
+        amountColumn = column;
+      }
+    }
+    const printed = amountPiece ? readAmount(amountPiece.text) : null;
+    if (!printed) {
+      unread(index, 'bad_amount');
+      return;
+    }
+
+    let sign: 1 | -1 | null = null;
+    let source: SignSource | null = null;
+    if (amountColumn?.type === 'debit') [sign, source] = [-1, 'column'];
+    else if (amountColumn?.type === 'credit') [sign, source] = [1, 'column'];
+    else if (isCard && (printed.marker === 'negative' || printed.marker === 'credit')) [sign, source] = [1, 'marker'];
+    else if (isCard && printed.marker === 'debit') [sign, source] = [-1, 'marker'];
+    else if (!isCard && (printed.marker === 'negative' || printed.marker === 'debit')) [sign, source] = [-1, 'marker'];
+    else if (!isCard && (printed.marker === 'positive' || printed.marker === 'credit')) [sign, source] = [1, 'marker'];
+    else if (section_) [sign, source] = [section_ === 'credit' ? 1 : -1, 'section'];
+    else if (printedBalance !== undefined && previousBalance !== undefined) {
+      if (previousBalance + printed.absCents === printedBalance) [sign, source] = [1, 'running_balance'];
+      else if (previousBalance - printed.absCents === printedBalance) [sign, source] = [-1, 'running_balance'];
+    } else if (isCard) [sign, source] = [-1, 'card_rule'];
+    if (source) signSources[source] = (signSources[source] ?? 0) + 1;
+
+    const rowFlags: RowFlag[] = [...flags];
+    if (sign === null) rowFlags.push('ambiguous_sign');
+    const amountCents = sign === null ? null : sign * printed.absCents;
+    if (posted < addDays(period.start, -3) || posted > addDays(period.end, 3)) rowFlags.push('date_outside_period');
+    if (amountCents !== null && printedBalance !== undefined && previousBalance !== undefined && !isCard) {
+      if (previousBalance + amountCents !== printedBalance) rowFlags.push('running_balance_mismatch');
+    }
+    if (printedBalance !== undefined) previousBalance = printedBalance;
+    else if (amountCents !== null && previousBalance !== undefined) previousBalance += amountCents;
+
+    const row = {
+      line: section.lines[index]!,
+      postedDate: posted,
+      ...(transactionDate ? { transactionDate } : {}),
+      description,
+      amountCents,
+      flags: rowFlags,
+      ...(printedBalance !== undefined ? { printedBalance } : {}),
+    };
+    transactions.push(row);
+    (sectionTotal as SectionTotal | null)?.rows.push(row);
   }
-  return undefined;
-}
 
-// ---- The parser ---------------------------------------------------------------
-
-export const genericParser: StatementParser = {
-  id: 'generic-table',
-  version: 1,
-  parse(text: PdfText): ParseOutcome {
-    const { lines } = text;
-    const period = findPeriod(lines);
-    if (!period) return { ok: false, reason: 'no_period' };
-
-    const firstHeader = lines.findIndex((line) => findHeader(line) !== null);
-    const metadataLines = firstHeader >= 0 ? lines.slice(0, firstHeader) : lines.slice(0, 15);
-    const metadata = metadataLines.map((l) => l.text).join('\n');
-    const accountKind = findAccountKind(metadata);
-    const last4 = findLast4(metadata);
-    const openingBalanceCents = labelledAmount(metadataLines, /^(beginning|opening|previous|starting) balance\b/i);
-    const closingBalanceCents = labelledAmount(metadataLines, /^(ending|closing|new) balance\b/i);
-    const isCard = accountKind === 'credit_card';
-
-    let columns: Column[] = [];
-    let inTable = false;
-    let section: 'credit' | 'debit' | null = null;
-    let previousBalance: Cents | undefined = isCard ? undefined : openingBalanceCents;
-    let descriptionX = Infinity;
-    const transactions: (ParsedTransaction & { printedBalance?: Cents })[] = [];
-    const unreadLines: number[] = [];
-
-    lines.forEach((line, index) => {
-      const header = findHeader(line);
-      if (header) {
-        columns = header;
-        inTable = true;
-        section = null;
-        const description = line.pieces.find((p) => /description|transaction|details/i.test(p.text));
-        if (description) descriptionX = description.x0;
-        return;
-      }
-      if (!inTable && transactions.length === 0 && !isDateToken(line.pieces[0]?.text.split(/\s+/)[0] ?? '')) return;
-      if (/^(total|subtotal)\b/i.test(line.text) || /^page \d+ (of \d+)?$/i.test(line.text)) return;
-
-      const { dates, rest: afterDates } = leadingDates(line.pieces);
-      const { amounts, rest: middle } = trailingAmounts(afterDates);
-      const description = middle.map((p) => p.text).join(' ').trim();
-
-      if (dates.length === 0) {
-        if (amounts.length === 0) {
-          // The second line of the previous row's description (indented under
-          // the description column), or else a section heading.
-          const previous = transactions[transactions.length - 1];
-          if (previous && line.pieces[0]!.x0 >= descriptionX - 2 && line.page === lines[previous.line]!.page) {
-            previous.description += ` ${line.text}`;
-          } else if (CREDIT_SECTION.test(line.text) && !/\d/.test(line.text)) section = 'credit';
-          else if (DEBIT_SECTION.test(line.text) && !/\d/.test(line.text)) section = 'debit';
-        } else if (inTable) {
-          unreadLines.push(index);
-        }
-        return;
-      }
-
-      // Rows: dates first, amounts last, a description in between.
-      const posted = parseRowDate(dates.length === 2 ? dates[1]! : dates[0]!, period);
-      const transactionDate = dates.length === 2 ? parseRowDate(dates[0]!, period) : null;
-      if (!posted || amounts.length === 0 || description === '') {
-        if (amounts.length > 0 || inTable) unreadLines.push(index);
-        return;
-      }
-
-      let amountPiece: TextPiece | undefined;
-      let amountColumn: Column | null = null;
-      let printedBalance: Cents | undefined;
-      for (const piece of amounts) {
-        const column = columns.length ? columnFor(piece, columns) : null;
-        if (column?.type === 'balance' || (!columns.length && amounts.length > 1 && piece === amounts[amounts.length - 1])) {
-          const balance = readAmount(piece.text);
-          if (balance) printedBalance = balance.marker === 'negative' ? -balance.absCents : balance.absCents;
-        } else if (!amountPiece) {
-          amountPiece = piece;
-          amountColumn = column;
-        }
-      }
-      const printed = amountPiece ? readAmount(amountPiece.text) : null;
-      if (!printed) {
-        unreadLines.push(index);
-        return;
-      }
-
-      let sign: 1 | -1 | null = null;
-      if (amountColumn?.type === 'debit') sign = -1;
-      else if (amountColumn?.type === 'credit') sign = 1;
-      else if (isCard && (printed.marker === 'negative' || printed.marker === 'credit')) sign = 1;
-      else if (isCard && printed.marker === 'debit') sign = -1;
-      else if (!isCard && (printed.marker === 'negative' || printed.marker === 'debit')) sign = -1;
-      else if (!isCard && (printed.marker === 'positive' || printed.marker === 'credit')) sign = 1;
-      else if (section) sign = section === 'credit' ? 1 : -1;
-      else if (printedBalance !== undefined && previousBalance !== undefined) {
-        if (previousBalance + printed.absCents === printedBalance) sign = 1;
-        else if (previousBalance - printed.absCents === printedBalance) sign = -1;
-      } else if (isCard) sign = -1;
-
-      const flags: RowFlag[] = [];
-      if (sign === null) flags.push('ambiguous_sign');
-      const amountCents = sign === null ? null : sign * printed.absCents;
-      if (posted < addDays(period.start, -3) || posted > addDays(period.end, 3)) flags.push('date_outside_period');
-      if (amountCents !== null && printedBalance !== undefined && previousBalance !== undefined && !isCard) {
-        if (previousBalance + amountCents !== printedBalance) flags.push('running_balance_mismatch');
-      }
-      if (printedBalance !== undefined) previousBalance = printedBalance;
-      else if (amountCents !== null && previousBalance !== undefined) previousBalance += amountCents;
-
-      transactions.push({
-        line: index,
-        postedDate: posted,
-        ...(transactionDate ? { transactionDate } : {}),
-        description,
-        amountCents,
-        flags,
-        ...(printedBalance !== undefined ? { printedBalance } : {}),
-      });
-    });
-
-    if (transactions.length === 0) return { ok: false, reason: 'no_transactions' };
-
-    const validation = validate(transactions, { openingBalanceCents, closingBalanceCents, isCard, unreadLines });
-    const statement: ParsedStatement = {
-      parserId: this.id,
-      parserVersion: this.version,
+  const validation = validate(transactions, { openingBalanceCents, closingBalanceCents, isCard, unreadLines, sectionTotals });
+  return {
+    statement: {
       ...(accountKind ? { accountKind } : {}),
       ...(last4 ? { last4 } : {}),
       periodStart: period.start,
@@ -357,16 +399,77 @@ export const genericParser: StatementParser = {
       ...(closingBalanceCents !== undefined ? { closingBalanceCents } : {}),
       transactions: transactions.map(({ printedBalance: _balance, ...rest }) => rest),
       unreadLines,
+      unreadReasons,
       validation,
-    };
-    const score = validation.status === 'verified' ? 1 : validation.status === 'failed' ? 0.3 : 0.6;
-    return { ok: true, statement, score };
+      periodSource,
+      signSources,
+    },
+    score: validation.status === 'verified' ? 1 : validation.status === 'failed' ? 0.3 : 0.6,
+  };
+}
+
+// ---- The parser ---------------------------------------------------------------
+
+export const genericParser: StatementParser = {
+  id: 'generic-table',
+  version: 2,
+  parse(text: PdfText): ParseOutcome {
+    const { lines } = text;
+    const document = findPeriod(lines);
+    const { preamble, sections } = splitAccounts(lines);
+
+    const read: ReadAccount[] = [];
+    for (const section of sections) {
+      // A combined statement may print each account's own period; else the document's applies.
+      const own = sections.length > 1 ? findPeriod(section.lines.map((i) => lines[i]!)) : null;
+      const found = own?.period ? own : document;
+      if (!found.period) return { ok: false, reason: 'no_period', periodCandidates: document.candidates };
+      read.push(readAccount(lines, section, found.period, found.source!));
+    }
+
+    // A transaction-like row outside every account section can't be placed: never silently dropped.
+    const strays = preamble.filter((i) => {
+      const { dates } = leadingDates(lines[i]!.pieces);
+      return dates.length > 0 && trailingAmounts(lines[i]!.pieces).amounts.length > 0;
+    });
+    if (strays.length && read[0]) {
+      read[0].statement.unreadLines.push(...strays);
+      read[0].statement.unreadReasons.push(...strays.map((): UnreadReason => 'outside_any_account'));
+      read[0].statement.validation = revalidate(read[0].statement);
+      read[0].score = Math.min(read[0].score, 0.6);
+    }
+
+    if (read.every((r) => r.statement.transactions.length === 0)) return { ok: false, reason: 'no_transactions' };
+    const statements: ParsedStatement[] = read.map((r, index) => ({
+      parserId: this.id,
+      parserVersion: this.version,
+      ...r.statement,
+      ...(read.length > 1 ? { section: { index, of: read.length } } : {}),
+    }));
+    return { ok: true, statements, score: read.reduce((sum, r) => sum + r.score, 0) / read.length };
   },
 };
 
+/** Validation again after unread lines were added: they can only make it weaker. */
+function revalidate(statement: ReadAccount['statement']): StatementValidation {
+  const checks = statement.validation.checks.map((c) =>
+    c.label === EVERY_ROW_READ ? { ...c, passed: false } : c,
+  );
+  const failed = statement.validation.status === 'failed';
+  return { status: failed ? 'failed' : checks.some((c) => c.passed === true) ? 'partially_verified' : 'unverified', checks };
+}
+
+const EVERY_ROW_READ = 'Every row was read';
+
 function validate(
   transactions: ParsedTransaction[],
-  facts: { openingBalanceCents: Cents | undefined; closingBalanceCents: Cents | undefined; isCard: boolean; unreadLines: number[] },
+  facts: {
+    openingBalanceCents: Cents | undefined;
+    closingBalanceCents: Cents | undefined;
+    isCard: boolean;
+    unreadLines: number[];
+    sectionTotals: SectionTotal[];
+  },
 ): StatementValidation {
   const checks: StatementValidation['checks'] = [];
   const known = transactions.filter((t) => t.amountCents !== null);
@@ -385,10 +488,27 @@ function validate(
     checks.push({ label: 'Opening and closing balances printed on the statement', passed: null });
   }
   const runningMismatch = transactions.some((t) => t.flags.includes('running_balance_mismatch'));
-  checks.push({ label: 'Every row agrees with the running balance', passed: runningMismatch ? false : null });
-  checks.push({ label: 'Every row was read', passed: facts.unreadLines.length === 0 && allKnown });
+  const runningChecked = !facts.isCard && transactions.some((t) => (t as { printedBalance?: Cents }).printedBalance !== undefined);
+  checks.push({ label: 'Every row agrees with the running balance', passed: runningMismatch ? false : runningChecked ? true : null });
 
-  const failed = balancesMatch === false || runningMismatch;
+  // Each section heading that prints a total must equal the rows read under it,
+  // so a row missed, counted twice or put in the wrong section is caught.
+  let totalsMatch: boolean | null = null;
+  if (facts.sectionTotals.length) {
+    const rowsKnown = facts.sectionTotals.every((s) => s.rows.every((r) => r.amountCents !== null));
+    // A heading's total is printed either net (returns subtracted from purchases) or as the sum of its rows.
+    totalsMatch = rowsKnown
+      ? facts.sectionTotals.every(
+          (s) =>
+            Math.abs(sumCents(s.rows.map((r) => r.amountCents!))) === s.printedCents ||
+            sumCents(s.rows.map((r) => Math.abs(r.amountCents!))) === s.printedCents,
+        )
+      : null;
+    checks.push({ label: 'Each section adds up to the total printed in its heading', passed: totalsMatch });
+  }
+  checks.push({ label: EVERY_ROW_READ, passed: facts.unreadLines.length === 0 && allKnown });
+
+  const failed = balancesMatch === false || runningMismatch || totalsMatch === false;
   const status = failed
     ? 'failed'
     : balancesMatch === true && facts.unreadLines.length === 0 && allKnown

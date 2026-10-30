@@ -79,13 +79,16 @@ export function planStatements(ledger: LedgerDocument, inputs: { input: Statemen
     list.push({ id: t.id, accountId: t.accountId, postedDate: t.postedDate, amountCents: t.amountCents, originalDescription: t.originalDescription });
     knownByAccount.set(t.accountId, list);
   }
-  const seenFiles = new Set(ledger.statements.map((s) => s.fileSha256));
+  // A file is identified by its fingerprint and, for a combined statement, the account section within it.
+  const fileKey = (sha256: string, section: number | undefined) => `${sha256}#${section ?? 0}`;
+  const seenFiles = new Set(ledger.statements.map((s) => fileKey(s.fileSha256, s.fileSection)));
 
   return inputs.map(({ input, account }, statementIndex) => {
     const key = accountKey(account);
     const parsed = input.statement;
-    const alreadyImported = seenFiles.has(input.sha256);
-    seenFiles.add(input.sha256);
+    const thisFile = fileKey(input.sha256, input.statement.section?.index);
+    const alreadyImported = seenFiles.has(thisFile);
+    seenFiles.add(thisFile);
 
     const usable = parsed.transactions.filter((t) => t.amountCents !== null);
     const candidates = usable.map((t, i) => ({
@@ -112,6 +115,7 @@ export function planStatements(ledger: LedgerDocument, inputs: { input: Statemen
       }
       const reasons: string[] = [];
       if (verdict.status === 'new_in_covered_period') reasons.push('Falls in a period already added: check it is not a duplicate');
+      if (t.flags.includes('date_assigned')) reasons.push("No date was printed for this line, so the statement's closing date was used");
       if (t.flags.includes('date_outside_period')) reasons.push("Date is outside the statement's period");
       if (t.flags.includes('running_balance_mismatch')) reasons.push("Doesn't match the statement's running balance");
       return { transaction: t, status: reasons.length ? 'check' : 'new', reasons, include: true };
@@ -201,6 +205,7 @@ export function applyImport(
       ...(parsed.openingBalanceCents !== undefined ? { openingBalanceCents: parsed.openingBalanceCents } : {}),
       ...(parsed.closingBalanceCents !== undefined ? { closingBalanceCents: parsed.closingBalanceCents } : {}),
       fileSha256: draft.input.sha256,
+      ...(parsed.section ? { fileSection: parsed.section.index } : {}),
       parserId: parsed.parserId,
       parserVersion: parsed.parserVersion,
       transactionCount: parsed.transactions.length,
