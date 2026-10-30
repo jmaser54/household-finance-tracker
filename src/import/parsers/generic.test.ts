@@ -505,3 +505,125 @@ describe('"verified" only when the balances were actually reconciled', () => {
     expect(outcome.statements[0]!.validation.status).not.toBe('verified');
   });
 });
+
+describe('money in or out: evidence the statement prints, read in more layouts', () => {
+  const top = (ending = '1,150.00'): (string | Piece[])[] => [
+    'Everyday Checking   Account number XXXXXX4821',
+    'Statement period 03/01/2026 to 03/31/2026',
+    labelled('Beginning balance', '1,000.00'),
+    labelled('Ending balance', ending),
+  ];
+  const AMOUNT_HEADER: Piece[] = [['Date', 40], ['Description', 90], at('Amount', 480)];
+  const BALANCE_HEADER: Piece[] = [['Date', 40], ['Description', 90], at('Amount', 480), at('Balance', 560)];
+  const row = (date: string, text: string, amount: string, balance?: string): Piece[] =>
+    [[date, 40], [text, 90], at(amount, 480), ...(balance ? [at(balance, 560)] : [])] as Piece[];
+
+  it('a section heading printed above its own column header gives the rows their direction', () => {
+    const s = one([
+      ...top(),
+      'DEPOSITS AND ADDITIONS',
+      AMOUNT_HEADER,
+      row('03/01', 'PAYROLL EXAMPLE EMPLOYER', '250.00'),
+      [['Total Deposits and Additions', 40], at('$250.00', 480)],
+      'ELECTRONIC WITHDRAWALS',
+      AMOUNT_HEADER,
+      row('03/05', 'EXAMPLE UTILITY CO', '100.00'),
+      [['Total Electronic Withdrawals', 40], at('$100.00', 480)],
+    ]);
+    expect(amounts(s)).toEqual([25_000, -10_000]);
+    expect(s.signSources).toEqual({ section: 2 });
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a column header with no heading just above it starts with no section', () => {
+    const s = one([...top(), 'DEPOSITS AND ADDITIONS', [['Daily summary', 40]], AMOUNT_HEADER, row('03/01', 'PAYROLL EXAMPLE EMPLOYER', '250.00')]);
+    expect(amounts(s)).toEqual([null]);
+  });
+
+  it.each([
+    ['Withdrawals/Debits', 'Deposits/Credits'],
+    ['Checks & Debits', 'Deposits & Credits'],
+    ['Debits ($)', 'Credits ($)'],
+    ['Debit Amount', 'Credit Amount'],
+    ['Withdrawals (-)', 'Deposits (+)'],
+  ])('combined or decorated column labels: "%s" and "%s"', (debit, credit) => {
+    const s = one([
+      ...top(),
+      [['Date', 40], ['Description', 90], at(debit, 400), at(credit, 480)],
+      [['03/01', 40], ['PAYROLL EXAMPLE EMPLOYER', 90], at('250.00', 480)],
+      [['03/05', 40], ['EXAMPLE UTILITY CO', 90], at('100.00', 400)],
+    ]);
+    expect(amounts(s)).toEqual([25_000, -10_000]);
+    expect(s.signSources).toEqual({ column: 2 });
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a label naming both directions is not a direction', () => {
+    const s = one([
+      ...top(),
+      [['Date', 40], ['Description', 90], at('Debits/Credits', 480)],
+      [['03/01', 40], ['PAYROLL EXAMPLE EMPLOYER', 90], at('250.00', 480)],
+    ]);
+    expect(amounts(s)).toEqual([null]);
+  });
+
+  it('a minus sign printed apart from its amount', () => {
+    const s = one([...top('900.00'), AMOUNT_HEADER, [['03/05', 40], ['EXAMPLE UTILITY CO', 90], ['-', 440], at('100.00', 480)]]);
+    expect(amounts(s)).toEqual([-10_000]);
+    expect(s.transactions[0]!.description).toBe('EXAMPLE UTILITY CO');
+  });
+
+  it('a single Amount column that marks money out with a minus: unmarked amounts are money in', () => {
+    const s = one([...top(), AMOUNT_HEADER, row('03/01', 'PAYROLL EXAMPLE EMPLOYER', '250.00'), row('03/05', 'EXAMPLE UTILITY CO', '-100.00')]);
+    expect(amounts(s)).toEqual([25_000, -10_000]);
+    expect(s.signSources).toEqual({ marker: 1, signed_column: 1 });
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('…but not when the column never prints a minus: those rows stay unknown', () => {
+    const s = one([...top(), AMOUNT_HEADER, row('03/01', 'PAYROLL EXAMPLE EMPLOYER', '250.00'), row('03/05', 'EXAMPLE UTILITY CO', '100.00')]);
+    expect(amounts(s)).toEqual([null, null]);
+    expect(s.validation.status).toBe('unverified');
+  });
+
+  it('…and never on a card, where an unmarked amount follows the card rule', () => {
+    const s = one([...cardTop('0.00', '40.00'), CARD_HEADER, cardRow('02/20', 'EXAMPLE GROCER', '50.00'), cardRow('02/22', 'EXAMPLE RETURN', '-10.00')]);
+    expect(amounts(s)).toEqual([-5_000, 1_000]);
+  });
+
+  it('a running balance printed only on the last row of each day settles every row when only one choice fits', () => {
+    const s = one([
+      ...top(),
+      BALANCE_HEADER,
+      row('03/01', 'PAYROLL EXAMPLE EMPLOYER', '250.00'),
+      row('03/01', 'EXAMPLE COFFEE', '10.00', '1,240.00'),
+      row('03/05', 'EXAMPLE UTILITY CO', '90.00', '1,150.00'),
+    ]);
+    expect(amounts(s)).toEqual([25_000, -1_000, -9_000]);
+    expect(s.signSources).toEqual({ running_balance: 3 });
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('…but leaves them unknown when more than one choice fits', () => {
+    // +10 -10 and -10 +10 both leave the balance unchanged.
+    const s = one([
+      ...top('1,000.00'),
+      BALANCE_HEADER,
+      row('03/01', 'EXAMPLE REFUND', '10.00'),
+      row('03/01', 'EXAMPLE COFFEE', '10.00', '1,000.00'),
+    ]);
+    expect(amounts(s)).toEqual([null, null]);
+    expect(s.validation.status).toBe('unverified');
+  });
+
+  it('…and flags the row when no choice fits the printed balance', () => {
+    const s = one([
+      ...top('1,237.00'),
+      BALANCE_HEADER,
+      row('03/01', 'PAYROLL EXAMPLE EMPLOYER', '250.00'),
+      row('03/01', 'EXAMPLE COFFEE', '10.00', '1,237.00'),
+    ]);
+    expect(s.transactions[1]!.flags).toContain('running_balance_mismatch');
+    expect(s.validation.status).toBe('failed');
+  });
+});

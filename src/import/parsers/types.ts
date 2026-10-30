@@ -18,7 +18,14 @@ export type RowFlag =
   | 'date_assigned';
 
 /** Where a row's money-in/money-out sign came from (masked diagnostics). Fixed codes only. */
-export type SignSource = 'column' | 'marker' | 'section' | 'running_balance' | 'card_rule';
+export type SignSource =
+  | 'column'
+  | 'marker'
+  | 'section'
+  | 'running_balance'
+  | 'card_rule'
+  /** A single Amount column on a bank statement that marks money out with a minus: unmarked means money in. */
+  | 'signed_column';
 
 /** Why a line that looked like a transaction could not be read. Fixed codes only. */
 export type UnreadReason =

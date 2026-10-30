@@ -62,6 +62,8 @@ export function findLast4(text: string, kind?: AccountKind): string | undefined 
   const patterns = [
     /\baccount\b[^\n\d]{0,30}?(?:ending in|ending|number|no\.?|#)\s*:?\s*(?:[x*•.\-\s]*?)(\d[\d\s-]{2,})/i,
     /[x*•]{3,}[\s-]*(\d{4})\b/i,
+    // "Primary Account: 000000004821"
+    /\baccount\s*:\s*(?:[x*•.\-\s]*?)(\d[\d\s-]{3,})/i,
     /\bcard\b[^\n\d]{0,30}?(?:ending in|ending|number|no\.?|#)\s*:?\s*(?:[x*•.\-\s]*?)(\d[\d\s-]{2,})/i,
   ];
   for (const pattern of patterns) {

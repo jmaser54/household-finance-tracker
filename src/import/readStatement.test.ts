@@ -139,6 +139,37 @@ describe('layouts found on real statements (synthetic copies)', () => {
     expect(outcome.diagnostics).toContain('  p1  MONTH NUMBER NUMBER through MONTH NUMBER NUMBER');
   });
 
+  it('a checking statement whose section headings sit above their own column headers, with unsigned amounts', async () => {
+    const s = await parsed('checking-sections-above-headers-2026-03.pdf');
+    expect(s).toMatchObject({ accountKind: 'checking', last4: '4821', periodStart: '2026-03-01', periodEnd: '2026-03-31' });
+    expect(rows(s)).toEqual([
+      ['2026-03-06', 'PAYROLL EXAMPLE EMPLOYER INC', 275_000],
+      ['2026-03-20', 'PAYROLL EXAMPLE EMPLOYER INC', 275_000],
+      ['2026-03-24', 'MOBILE DEPOSIT', 12_500],
+      ['2026-03-03', 'CARD PURCHASE EXAMPLE GROCER', -8_841],
+      ['2026-03-11', 'ATM WITHDRAWAL 123 EXAMPLE ST', -6_000],
+      ['2026-03-09', 'EXAMPLE UTILITY CO AUTOPAY', -11_407],
+      ['2026-03-15', 'PAYMENT TO EXAMPLE CARD ENDING 5512', -90_000],
+    ]);
+    expect(s.signSources).toEqual({ section: 7 });
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a savings statement with one minus-marked Amount column and a balance only on each day\'s last row', async () => {
+    const s = await parsed('savings-daily-balance-2026-03.pdf');
+    expect(s).toMatchObject({ accountKind: 'savings', last4: '7310' });
+    expect(rows(s)).toEqual([
+      ['2026-03-02', 'TRANSFER FROM CHECKING', 50_000],
+      ['2026-03-02', 'WITHDRAWAL TRANSFER TO CHECKING', -4_000],
+      ['2026-03-09', 'DEPOSIT', 12_000],
+      ['2026-03-16', 'WITHDRAWAL', -6_000],
+      ['2026-03-16', 'DEPOSIT', 2_500],
+      ['2026-03-31', 'INTEREST PAID', 618],
+    ]);
+    expect(s.transactions.every((t) => t.flags.length === 0)).toBe(true);
+    expect(s.validation.status).toBe('verified');
+  });
+
   it('a card with its period as closing date plus days, totals in headings and an undated interest line', async () => {
     const s = await parsed('card-closing-date-totals-2026-04.pdf');
     expect(s).toMatchObject({ accountKind: 'credit_card', last4: '9046', periodStart: '2026-03-16', periodEnd: '2026-04-13', periodSource: 'closing_date_and_cycle_days' });

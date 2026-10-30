@@ -248,6 +248,11 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
      - Short dates like "03/05" are placed in the statement period's year; statements spanning New Year work.
    - **Money in or out**, in this order: the column (Withdrawals/Debits vs Deposits/Credits), a printed marker (minus, parentheses, CR/DR), the section heading (e.g. "Purchases", "Payments and Other Credits", a bare "PAYMENTS"), the running balance, and on cards only, "unmarked means a charge". **If none applies, the row is flagged and not added.**
      - A heading that prints its section's total (e.g. "Payments and Other Credits -$1,250.00") still starts the section; it is not a transaction.
+     - A heading on the line just above a column header ("DEPOSITS AND ADDITIONS", then "Date Description Amount") applies to the rows under that header.
+     - Columns: combined and decorated labels count when every part names the same direction ("Withdrawals/Debits", "Checks & Debits", "Debits ($)", "Debit Amount"); "Debits/Credits" is no direction.
+     - A minus or "$" printed as a separate piece next to its amount belongs to it.
+     - **Running balance printed only on a day's last row:** the rows since the previous printed balance are settled only if exactly one choice of in/out gives the printed change; if several fit they stay unknown, and if none fits the row is flagged as disagreeing with the running balance.
+     - **Signed Amount column** (bank accounts only): when a single Amount column prints a minus on money going out, an amount in it with no sign is money coming in. Used only when nothing else settled the row; the balances must still reconcile for the statement to be verified.
    - **Undated interest and fee lines** (e.g. "INTEREST CHARGE ON PURCHASES 14.27" with no date) are added with the statement's closing date, flagged "date assigned", and always marked for review, with the printed description and amount kept. Any other undated line with an amount is reported unread.
    - **Not transactions:** interest-rate tables (a percentage or APR) and year-to-date totals are skipped.
    - **Validation:**
@@ -282,6 +287,8 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - **Credit card** whose period is a closing date plus days in the billing cycle, with totals printed in its headings, unmarked payments, an undated interest line, an interest-rate table and year-to-date totals.
 - **Credit card** with its period label and dates on separate lines ("March 14 - April 13, 2026") and bare "PAYMENTS" / "PURCHASES" headings.
 - **Checking** from a bank named "… Savings and Loan", with "For the period beginning … and ending …" and dated Beginning/Ending Balance rows.
+- **Checking** with each section heading above its own column header, unsigned amounts and no running balance ("Primary Account: 000…4821").
+- **Savings** with one minus-marked Amount column and a balance printed only on each day's last row.
 - **Combined checking and savings** with the period alone on a line on every page, "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings, each number printed after its balances, and an all-accounts balance line.
 
 **Not supported yet:**

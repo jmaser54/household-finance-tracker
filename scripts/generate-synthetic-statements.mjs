@@ -534,6 +534,99 @@ function combinedSummaries() {
   });
 }
 
+// ---- Layout 9: checking, each section heading above its own column header ----
+// Unsigned amounts in one Amount column and no running balance: the section
+// is the only evidence of direction. Period printed alone, unlabelled.
+function checkingSectionsAboveHeaders() {
+  return makePdf((p) => {
+    const opening = 412_550;
+    const sections = [
+      { heading: 'DEPOSITS AND ADDITIONS', total: 'Total Deposits and Additions', sign: 1, rows: [
+        { date: '03/06', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 275_000 },
+        { date: '03/20', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 275_000 },
+        { date: '03/24', description: 'MOBILE DEPOSIT', cents: 12_500 },
+      ] },
+      { heading: 'ATM & DEBIT CARD WITHDRAWALS', total: 'Total ATM & Debit Card Withdrawals', sign: -1, rows: [
+        { date: '03/03', description: 'CARD PURCHASE EXAMPLE GROCER', cents: 8_841 },
+        { date: '03/11', description: 'ATM WITHDRAWAL 123 EXAMPLE ST', cents: 6_000 },
+      ] },
+      { heading: 'ELECTRONIC WITHDRAWALS', total: 'Total Electronic Withdrawals', sign: -1, rows: [
+        { date: '03/09', description: 'EXAMPLE UTILITY CO AUTOPAY', cents: 11_407 },
+        { date: '03/15', description: 'PAYMENT TO EXAMPLE CARD ENDING 5512', cents: 90_000 },
+      ] },
+    ];
+    const total = (sec) => sec.rows.reduce((s, r) => s + r.cents, 0);
+    const ending = opening + sections.reduce((s, sec) => s + sec.sign * total(sec), 0);
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example National Bank', { size: 14, isBold: true });
+    p.text(50, (y -= 16), 'March 1, 2026 through March 31, 2026');
+    p.text(50, (y -= 14), 'Primary Account: 000000004821');
+    p.text(50, (y -= 22), 'CHECKING SUMMARY', { isBold: true });
+    p.text(50, (y -= 14), 'Beginning Balance');
+    p.text(560, y, `$${money(opening)}`, { align: 'right' });
+    for (const sec of sections) {
+      p.text(50, (y -= 14), sec.heading.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase()));
+      p.text(560, y, `${sec.sign < 0 ? '-' : ''}$${money(total(sec))}`, { align: 'right' });
+    }
+    p.text(50, (y -= 14), 'Ending Balance');
+    p.text(560, y, `$${money(ending)}`, { align: 'right' });
+    for (const sec of sections) {
+      p.text(50, (y -= 26), sec.heading, { isBold: true });
+      p.text(50, (y -= 16), 'DATE', { isBold: true });
+      p.text(95, y, 'DESCRIPTION', { isBold: true });
+      p.text(560, y, 'AMOUNT', { isBold: true, align: 'right' });
+      for (const row of sec.rows) {
+        p.text(50, (y -= 14), row.date);
+        p.text(95, y, row.description);
+        p.text(560, y, `$${money(row.cents)}`, { align: 'right' });
+      }
+      p.text(50, (y -= 14), sec.total, { isBold: true });
+      p.text(560, y, `$${money(total(sec))}`, { align: 'right' });
+    }
+  });
+}
+
+// ---- Layout 10: one Amount column, minus on money out, daily balance only ----
+// Deposits are printed without a sign; the balance appears only on the last
+// row of each day.
+function savingsDailyBalance() {
+  return makePdf((p) => {
+    const opening = 750_000;
+    const rows = [
+      { date: '03/02', description: 'TRANSFER FROM CHECKING', cents: 50_000 },
+      { date: '03/02', description: 'WITHDRAWAL TRANSFER TO CHECKING', cents: -4_000, last: true },
+      { date: '03/09', description: 'DEPOSIT', cents: 12_000, last: true },
+      { date: '03/16', description: 'WITHDRAWAL', cents: -6_000 },
+      { date: '03/16', description: 'DEPOSIT', cents: 2_500, last: true },
+      { date: '03/31', description: 'INTEREST PAID', cents: 618, last: true },
+    ];
+    let balance = opening;
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Credit Union', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Share Savings   Account number XXXX7310');
+    p.text(50, (y -= 14), 'Statement Period 03/01/2026 - 03/31/2026');
+    p.text(50, (y -= 22), 'Beginning Balance');
+    p.text(560, y, money(opening), { align: 'right' });
+    const ending = opening + rows.reduce((s, r) => s + r.cents, 0);
+    p.text(50, (y -= 14), 'Ending Balance');
+    p.text(560, y, money(ending), { align: 'right' });
+    y -= 26;
+    p.text(50, y, 'Date', { isBold: true });
+    p.text(95, y, 'Description', { isBold: true });
+    p.text(480, y, 'Amount', { isBold: true, align: 'right' });
+    p.text(560, y, 'Balance', { isBold: true, align: 'right' });
+    for (const row of rows) {
+      balance += row.cents;
+      p.text(50, (y -= 14), row.date);
+      p.text(95, y, row.description);
+      p.text(480, y, money(row.cents, { sign: true }), { align: 'right' });
+      if (row.last) p.text(560, y, money(balance), { align: 'right' });
+    }
+  });
+}
+
 // ---- Not statements ---------------------------------------------------------
 function scanned() {
   return makePdf((p) => {
@@ -594,6 +687,8 @@ const FIXTURES = {
   'card-bare-headings-2026-04.pdf': cardBareHeadings,
   'checking-worded-period-2026-03.pdf': checkingWordedPeriod,
   'combined-summaries-2026-03.pdf': combinedSummaries,
+  'checking-sections-above-headers-2026-03.pdf': checkingSectionsAboveHeaders,
+  'savings-daily-balance-2026-03.pdf': savingsDailyBalance,
   'scanned-image-only.pdf': scanned,
   'not-a-statement-letter.pdf': letter,
 };

@@ -33,12 +33,31 @@ interface Column {
   x1: number;
 }
 
-const COLUMN_LABELS: [RegExp, ColumnType][] = [
-  [/^(running )?balance$/i, 'balance'],
-  [/^(withdrawals?|debits?|subtractions|money out|charges)( \(-\))?$/i, 'debit'],
-  [/^(deposits?|credits?|additions|money in)( \(\+\))?$/i, 'credit'],
-  [/^amount( \(\$\))?$/i, 'amount'],
-];
+const DEBIT_COLUMN = /^(withdrawals?|debits?|subtractions|money out|paid out|charges|checks)$/;
+const CREDIT_COLUMN = /^(deposits?|credits?|additions|money in|paid in)$/;
+
+/**
+ * A column label's type. Combined and decorated labels count when every part
+ * agrees: "Withdrawals/Debits", "Checks & Debits", "Debits ($)", "Credits (+)",
+ * "Debit Amount". A label mixing both directions ("Debits/Credits") is none.
+ */
+function columnType(label: string): ColumnType | null {
+  const t = label
+    .toLowerCase()
+    .replace(/\((\$|-|\+|usd)\)|\$/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/^(running |daily |ending daily )?balance$/.test(t)) return 'balance';
+  if (/^amount$/.test(t)) return 'amount';
+  const parts = t
+    .split(/\s*(?:\/|&|,|\band\b)\s*/)
+    .map((part) => part.replace(/\bamount\b/, '').trim())
+    .filter(Boolean);
+  if (parts.length === 0 || parts.length > 3) return null;
+  if (parts.every((part) => DEBIT_COLUMN.test(part))) return 'debit';
+  if (parts.every((part) => CREDIT_COLUMN.test(part))) return 'credit';
+  return null;
+}
 
 // Section headings. On a bank statement a heading names its section anywhere
 // in a short line with no figures; one that prints a figure (its total) must be
@@ -150,7 +169,15 @@ function trailingAmounts(pieces: TextPiece[]): { amounts: TextPiece[]; rest: Tex
       continue;
     }
     if (!isAmount(last.text)) break;
-    amounts.unshift(rest.pop()!);
+    rest.pop();
+    // A sign or currency symbol printed as its own piece just before it: "-  100.00", "$ 100.00".
+    const before = rest[rest.length - 1];
+    if (before && /^(-|−|–|\$|-\$|\+)$/.test(before.text.trim()) && last.x0 - before.x1 <= 20 && !/^-|^\(/.test(last.text)) {
+      rest.pop();
+      amounts.unshift({ text: `${before.text.trim().replace(/[−–]/, '-')}${last.text}`, x0: before.x0, x1: last.x1 });
+    } else {
+      amounts.unshift(last);
+    }
   }
   return { amounts, rest };
 }
@@ -159,8 +186,8 @@ function findHeader(line: TextLine): Column[] | null {
   if (!line.pieces.some((p) => /\bdate\b/i.test(p.text))) return null;
   const columns: Column[] = [];
   for (const piece of line.pieces) {
-    const label = COLUMN_LABELS.find(([pattern]) => pattern.test(piece.text.trim()));
-    if (label) columns.push({ type: label[1], x0: piece.x0, x1: piece.x1 });
+    const type = columnType(piece.text);
+    if (type) columns.push({ type, x0: piece.x0, x1: piece.x1 });
   }
   return columns.length ? columns : null;
 }
@@ -243,6 +270,11 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
   let section_: 'credit' | 'debit' | null = null;
   let sectionTotal: SectionTotal | null = null;
   const sectionTotals: SectionTotal[] = [];
+  /** Rows whose sign is unknown since the last printed balance (see settleByBalance). */
+  let pending: { row: ParsedTransaction; absCents: Cents }[] = [];
+  /** Every row read with no sign marker, in a single Amount column (see signedColumnConvention). */
+  const unmarkedInAmountColumn: { row: ParsedTransaction; absCents: Cents }[] = [];
+  let negativeInAmountColumn = false;
   let previousBalance: Cents | undefined = isCard ? undefined : openingBalanceCents;
   let descriptionX = Infinity;
   const transactions: (ParsedTransaction & { printedBalance?: Cents })[] = [];
@@ -259,7 +291,12 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     if (header) {
       columns = header;
       inTable = true;
-      section_ = null;
+      // A section heading printed on the line just above the column header
+      // ("DEPOSITS AND ADDITIONS", then "Date  Description  Amount") applies to the rows below.
+      const above = lines[index - 1];
+      const aboveIsHeading =
+        above && !isDateToken(above.pieces[0]?.text.split(/\s+/)[0] ?? '') && trailingAmounts(above.pieces).amounts.length === 0;
+      section_ = aboveIsHeading ? sectionHeading(above.text, isCard, false) : null;
       sectionTotal = null;
       const description = line.pieces.find((p) => /description|transaction|details/i.test(p.text));
       if (description) descriptionX = description.x0;
@@ -359,33 +396,83 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     else if (!isCard && (printed.marker === 'negative' || printed.marker === 'debit')) [sign, source] = [-1, 'marker'];
     else if (!isCard && (printed.marker === 'positive' || printed.marker === 'credit')) [sign, source] = [1, 'marker'];
     else if (section_) [sign, source] = [section_ === 'credit' ? 1 : -1, 'section'];
-    else if (printedBalance !== undefined && previousBalance !== undefined) {
-      if (previousBalance + printed.absCents === printedBalance) [sign, source] = [1, 'running_balance'];
-      else if (previousBalance - printed.absCents === printedBalance) [sign, source] = [-1, 'running_balance'];
-    } else if (isCard) [sign, source] = [-1, 'card_rule'];
+    else if (isCard) [sign, source] = [-1, 'card_rule'];
     if (source) signSources[source] = (signSources[source] ?? 0) + 1;
 
     const rowFlags: RowFlag[] = [...flags];
-    if (sign === null) rowFlags.push('ambiguous_sign');
-    const amountCents = sign === null ? null : sign * printed.absCents;
     if (posted < addDays(period.start, -3) || posted > addDays(period.end, 3)) rowFlags.push('date_outside_period');
-    if (amountCents !== null && printedBalance !== undefined && previousBalance !== undefined && !isCard) {
-      if (previousBalance + amountCents !== printedBalance) rowFlags.push('running_balance_mismatch');
-    }
-    if (printedBalance !== undefined) previousBalance = printedBalance;
-    else if (amountCents !== null && previousBalance !== undefined) previousBalance += amountCents;
-
-    const row = {
+    const row: ParsedTransaction & { printedBalance?: Cents } = {
       line: section.lines[index]!,
       postedDate: posted,
       ...(transactionDate ? { transactionDate } : {}),
       description,
-      amountCents,
+      amountCents: sign === null ? null : sign * printed.absCents,
       flags: rowFlags,
       ...(printedBalance !== undefined ? { printedBalance } : {}),
     };
     transactions.push(row);
     (sectionTotal as SectionTotal | null)?.rows.push(row);
+    if (sign === null) pending.push({ row, absCents: printed.absCents });
+    if (!isCard && (amountColumn === null || amountColumn.type === 'amount')) {
+      if (printed.marker === 'negative') negativeInAmountColumn = true;
+      if (printed.marker === 'none') unmarkedInAmountColumn.push({ row, absCents: printed.absCents });
+    }
+
+    if (printedBalance !== undefined && previousBalance !== undefined && !isCard) {
+      // previousBalance already includes every known row since the last printed balance except this one.
+      if (pending.length) settleByBalance(printedBalance - previousBalance - (sign === null ? 0 : row.amountCents!));
+      else if (previousBalance + row.amountCents! !== printedBalance) rowFlags.push('running_balance_mismatch');
+    }
+    if (printedBalance !== undefined) {
+      previousBalance = printedBalance;
+      pending = [];
+    } else if (row.amountCents !== null && previousBalance !== undefined) {
+      previousBalance += row.amountCents;
+    }
+    for (const p of pending) if (!p.row.flags.includes('ambiguous_sign')) p.row.flags.push('ambiguous_sign');
+  }
+
+  /**
+   * The printed running balance moved by `change` over the rows since the last
+   * printed balance, some of whose signs are unknown (a balance printed only on
+   * a day's last row). If exactly one choice of in/out for those rows gives
+   * that change, it is the one printed. If several choices fit, they stay
+   * unknown; if none fits, the row is flagged as disagreeing with the running
+   * balance. Nothing is guessed.
+   */
+  function settleByBalance(target: Cents) {
+    const solutions: number[] = [];
+    if (pending.length <= 12) {
+      for (let mask = 0; mask < 1 << pending.length; mask++) {
+        const total = pending.reduce((sum, p, i) => sum + (mask & (1 << i) ? p.absCents : -p.absCents), 0);
+        if (total === target) solutions.push(mask);
+        if (solutions.length > 1) break;
+      }
+    }
+    if (solutions.length === 1) {
+      pending.forEach((p, i) => {
+        p.row.amountCents = solutions[0]! & (1 << i) ? p.absCents : -p.absCents;
+        p.row.flags = p.row.flags.filter((f) => f !== 'ambiguous_sign');
+        signSources.running_balance = (signSources.running_balance ?? 0) + 1;
+      });
+      pending = [];
+    } else if (solutions.length === 0 && pending.length <= 12) {
+      // No choice of in/out matches the printed balance: something was misread.
+      transactions[transactions.length - 1]!.flags.push('running_balance_mismatch');
+    }
+  }
+
+  // The statement's own convention for a single Amount column on a bank
+  // account: when it prints a minus on money going out, an amount printed
+  // without one in that same column is money coming in. Used only for rows no
+  // other evidence settled; the balances must still reconcile to verify.
+  if (negativeInAmountColumn) {
+    for (const { row, absCents } of unmarkedInAmountColumn) {
+      if (row.amountCents !== null) continue;
+      row.amountCents = absCents;
+      row.flags = row.flags.filter((f) => f !== 'ambiguous_sign');
+      signSources.signed_column = (signSources.signed_column ?? 0) + 1;
+    }
   }
 
   const validation = validate(transactions, {

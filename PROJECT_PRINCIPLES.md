@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.8: unlabelled periods, type-only account headings, "verified" means reconciled)
+**Last reviewed:** 2026-10-30 (v2.9: direction of money read from more printed evidence)
 
 ## How to use this document
 
@@ -409,7 +409,8 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - reconciliation fails when a row is unread, printed twice, or a payment is read as a purchase (caught by section totals even when balances happen to agree), and a row with no sign evidence is never counted;
   - a period printed alone on its line with no label ("March 1, 2026 through March 31, 2026", masked `MONTH NUMBER NUMBER through MONTH NUMBER NUMBER`), repeated on each page; disagreeing unlabelled ranges give no period;
   - combined statements with "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings and every heading variant traced, including no printed number; two accounts that can't be split, or an all-accounts balance line, fail;
-  - "verified" only when the balances were reconciled: no balances, one balance, or an unknown sign is *unverified*; an unread line is at most *partially verified*.
+  - "verified" only when the balances were reconciled: no balances, one balance, or an unknown sign is *unverified*; an unread line is at most *partially verified*;
+  - direction of money from: a section heading above its column header; combined or decorated column labels; a minus printed apart from its amount; a daily-only running balance when exactly one choice fits (several → unknown, none → failed); a minus-marked Amount column on a bank account (never on a card, never when the column prints no minus).
 - In the app's oldest engine (CI): with the built-ins Monterey's WebKit lacks removed from the page and the worker, statements still import (Chromium); every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
 - When a file can't be read, "Technical details (no statement contents)" names the step that failed, the error type with digits and quoted text removed, structural facts about the file and the engine's features. A test checks it contains none of the synthetic statements' values.
 - Planning and adding (`src/import/plan.test.ts`):
@@ -473,6 +474,14 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.9.** One statement's rows were still "Can't use". Reproduced on synthetic layouts where the direction is printed but wasn't read. Security requirements, §10 rules and reconciliation are unchanged; nothing is guessed.
+  - Section headings printed above their own column headers.
+  - Combined and decorated column labels.
+  - A minus printed as a separate piece.
+  - A running balance printed only on each day's last row, used when exactly one choice fits.
+  - A single Amount column that marks money out with a minus (bank accounts only).
+  - "Account: 000…1234" numbers.
 
 - **2026-10-30, v2.8.** The household's statements still reported "Statement period not found". Security requirements and §10 financial rules are unchanged.
   - Root cause: the period line is printed alone, with no label word, and the detector required one. Such a line is now accepted, when all of them agree.
