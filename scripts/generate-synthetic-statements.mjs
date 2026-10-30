@@ -449,6 +449,91 @@ function checkingWordedPeriod() {
   });
 }
 
+// ---- Layout 8: combined statement with "CHECKING SUMMARY" / "SAVINGS SUMMARY" --
+// The period is printed alone on a line, unlabelled, on every page; each
+// account's number appears only after its balances; signed Amount column.
+function combinedSummaries() {
+  return makePdf((p) => {
+    const period = 'March 1, 2026 through March 31, 2026';
+    const checkingOpening = 320_000;
+    const checkingRows = [
+      { date: '03/02', description: 'EXAMPLE GROCER', cents: -6_412 },
+      { date: '03/06', description: 'TRANSFER TO SAVINGS', cents: -25_000 },
+      { date: '03/13', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 285_000 },
+      { date: '03/20', description: 'EXAMPLE PHARMACY', cents: -2_275 },
+      { date: '03/27', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 285_000 },
+      { date: '03/30', description: 'EXAMPLE UTILITY CO', cents: -9_830 },
+    ];
+    const savingsOpening = 640_000;
+    const savingsRows = [
+      { date: '03/06', description: 'TRANSFER FROM CHECKING', cents: 25_000 },
+      { date: '03/31', description: 'INTEREST PAID', cents: 512 },
+    ];
+    const sum = (rows, test) => rows.filter((r) => test(r.cents)).reduce((s, r) => s + r.cents, 0);
+    const checkingEnding = checkingOpening + sum(checkingRows, () => true);
+    const savingsEnding = savingsOpening + sum(savingsRows, () => true);
+    let balance;
+    const header = (y) => {
+      p.text(50, y, 'Date', { isBold: true });
+      p.text(95, y, 'Description', { isBold: true });
+      p.text(480, y, 'Amount', { isBold: true, align: 'right' });
+      p.text(560, y, 'Balance', { isBold: true, align: 'right' });
+      return y - 16;
+    };
+    const rowsOut = (y, rows) => {
+      for (const row of rows) {
+        balance += row.cents;
+        p.text(50, y, row.date);
+        p.text(95, y, row.description);
+        p.text(480, y, money(row.cents, { sign: true }), { align: 'right' });
+        p.text(560, y, money(balance), { align: 'right' });
+        y -= 14;
+      }
+      return y;
+    };
+    const summary = (y, title, opening, rows, ending, number) => {
+      p.text(50, y, title, { size: 11, isBold: true });
+      p.text(50, (y -= 16), 'Beginning balance on March 1, 2026');
+      p.text(560, y, `$${money(opening)}`, { align: 'right' });
+      p.text(50, (y -= 14), 'Deposits and other credits');
+      p.text(560, y, `$${money(sum(rows, (c) => c > 0))}`, { align: 'right' });
+      p.text(50, (y -= 14), 'Withdrawals and other debits');
+      p.text(560, y, `-$${money(sum(rows, (c) => c < 0))}`, { align: 'right' });
+      p.text(50, (y -= 14), 'Ending balance on March 31, 2026');
+      p.text(560, y, `$${money(ending)}`, { align: 'right' });
+      p.text(50, (y -= 16), `Account number: XXXXXXXX${number}`);
+      return y - 22;
+    };
+
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Hometown Bank', { size: 14, isBold: true });
+    p.text(50, (y -= 16), period);
+    p.text(50, (y -= 14), 'Jordan and Casey Example');
+    p.text(50, (y -= 22), 'Your accounts at a glance', { isBold: true });
+    p.text(50, (y -= 14), 'Beginning balance');
+    p.text(470, y, money(checkingOpening), { align: 'right' });
+    p.text(560, y, money(savingsOpening), { align: 'right' });
+    y = summary(y - 30, 'CHECKING SUMMARY', checkingOpening, checkingRows, checkingEnding, '4821');
+    y = header(y);
+    balance = checkingOpening;
+    rowsOut(y, checkingRows.slice(0, 4));
+    p.text(500, 40, 'Page 1 of 2');
+
+    p.newPage();
+    y = 750;
+    p.text(50, y, 'Example Hometown Bank', { size: 14, isBold: true });
+    p.text(50, (y -= 16), period);
+    y = header(y - 26);
+    y = rowsOut(y, checkingRows.slice(4));
+    y = summary(y - 26, 'SAVINGS SUMMARY', savingsOpening, savingsRows, savingsEnding, '7310');
+    y = header(y);
+    balance = savingsOpening;
+    rowsOut(y, savingsRows);
+    p.text(500, 40, 'Page 2 of 2');
+  });
+}
+
 // ---- Not statements ---------------------------------------------------------
 function scanned() {
   return makePdf((p) => {
@@ -508,6 +593,7 @@ const FIXTURES = {
   'card-closing-date-totals-2026-04.pdf': cardWithTotals,
   'card-bare-headings-2026-04.pdf': cardBareHeadings,
   'checking-worded-period-2026-03.pdf': checkingWordedPeriod,
+  'combined-summaries-2026-03.pdf': combinedSummaries,
   'scanned-image-only.pdf': scanned,
   'not-a-statement-letter.pdf': letter,
 };

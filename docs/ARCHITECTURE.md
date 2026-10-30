@@ -233,10 +233,11 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
    - **WebKit finding (Phase D CI):** pdf.js's own `getTextContent()` loops over a stream with `for await`. Safari's WebKit doesn't support that, and the legacy build doesn't polyfill it, so text is read through an explicit stream reader instead. A test simulates the missing feature so this can't regress.
 3. Checks before reading: not a PDF, damaged, or password-protected files are reported as such. Fewer than 25 characters of text per page means **scanned / image-only**, which is explained and not guessed at (no OCR).
 4. **Parsers** (`parsers/registry.ts`): each registered parser reads the text and the best-scoring result wins. Today there is one, `generic-table` (`parsers/generic.ts`), a general reader for the common layout of a table where rows start with a date and end with amounts:
-   - **Combined statements** (`parsers/accounts.ts`): a PDF with several accounts (e.g. checking and savings) is split at each account heading (a line naming the account type and number, with no date or amount). Each account is read and reconciled on its own, with its own balances and rows, so nothing in one account can affect another's checks. Its pages may continue later in the file. A dated row outside every account section is reported, never dropped.
+   - **Combined statements** (`parsers/accounts.ts`): a PDF with several accounts (e.g. checking and savings) is split at each account heading: a line naming the account type and number, or a short line naming only the type ("CHECKING SUMMARY", "Savings Account Summary"), with no date or amount. A section's number may be printed anywhere in its summary. Each section must print its own balance lines, or it isn't one. If one section still holds two accounts' balances (different opening or closing balances, or a balance line listing several amounts), it fails. Each account is read and reconciled on its own, with its own balances and rows, so nothing in one account can affect another's checks. Its pages may continue later in the file. A dated row outside every account section is reported, never dropped.
    - **Statement details:**
      - **Period** (`parsers/period.ts`), only from dates printed on the statement:
        - a printed range in common wordings and date styles (03/01/2026, 03-01-26, 2026-03-01, March 1, 2026, 1 March 2026, "March 1 - 31, 2026"), labelled on its line or the line before;
+       - or a range printed alone on its line with no label ("March 1, 2026 through March 31, 2026"), if every such line agrees;
        - or a printed opening date and closing date;
        - or, on some cards, a closing date and the printed "Days in billing cycle".
        - The payment due date is never used. Without one of these, the statement is "no period", not guessed.
@@ -254,7 +255,8 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
      - each row is checked against the running balance;
      - each section heading that prints a total must equal the rows read under it (net or gross), which catches a row missed, counted twice or placed in the wrong section even when the balances happen to agree;
      - posted dates must fall inside the period;
-     - lines that look like transactions but can't be read are counted and shown, never dropped silently.
+     - lines that look like transactions but can't be read are counted and shown, never dropped silently;
+     - **status:** *verified* only if opening plus activity equals closing and every row was read; *partially verified* if they add up but a line wasn't read; *unverified* if that comparison couldn't be made (the screen says why); *failed* if any check failed (PROJECT_PRINCIPLES §12).
 5. **Review** (`plan.ts`, `src/ui/Import.tsx`):
    - **Accounts:** each statement is matched to an existing account by type and last four digits, or proposed as a new, nameable account. Several months of a new account share one account.
    - **Duplicates and overlaps**, via `src/domain/dedupe.ts`: the same file again is "already added". Lines in an already-imported period are matched as a multiset, so genuine identical purchases survive. Near-matches are marked "Check this".
@@ -280,6 +282,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - **Credit card** whose period is a closing date plus days in the billing cycle, with totals printed in its headings, unmarked payments, an undated interest line, an interest-rate table and year-to-date totals.
 - **Credit card** with its period label and dates on separate lines ("March 14 - April 13, 2026") and bare "PAYMENTS" / "PURCHASES" headings.
 - **Checking** from a bank named "… Savings and Loan", with "For the period beginning … and ending …" and dated Beginning/Ending Balance rows.
+- **Combined checking and savings** with the period alone on a line on every page, "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings, each number printed after its balances, and an all-accounts balance line.
 
 **Not supported yet:**
 - **Scanned or image-only PDFs:** there is no OCR, deliberately, so nothing is guessed.
@@ -300,7 +303,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
   - every date, amount, number, month name and word becomes `DATE`, `AMOUNT`, `NUMBER`, `MONTH` or `TEXT`; only layout words such as "Balance", "Payments" or "through" remain;
   - for each statement (each account of a combined one): its type, whether a number, opening and closing balance were found (not what they are), how the period was found, how many rows took their sign from each kind of evidence, how many dates were assigned, and the result of each check;
   - every unread line, masked, with a reason code;
-  - when no period is found, the lines that looked like they might hold it, masked, with how many dates each held.
+  - when no period is found, the lines that looked like they might hold it, masked, with how many dates each held, and the account sections found (type and masked heading).
 - You can copy or describe that masked shape. A matching synthetic fixture and parser change can then be written without any real document leaving the Mac.
 
 ## 11. Verification and tests

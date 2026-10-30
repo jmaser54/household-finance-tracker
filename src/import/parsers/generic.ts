@@ -388,7 +388,14 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     (sectionTotal as SectionTotal | null)?.rows.push(row);
   }
 
-  const validation = validate(transactions, { openingBalanceCents, closingBalanceCents, isCard, unreadLines, sectionTotals });
+  const validation = validate(transactions, {
+    openingBalanceCents,
+    closingBalanceCents,
+    isCard,
+    unreadLines,
+    sectionTotals,
+    oneAccount: balancesOfOneAccount(lines),
+  });
   return {
     statement: {
       ...(accountKind ? { accountKind } : {}),
@@ -423,7 +430,14 @@ export const genericParser: StatementParser = {
       // A combined statement may print each account's own period; else the document's applies.
       const own = sections.length > 1 ? findPeriod(section.lines.map((i) => lines[i]!)) : null;
       const found = own?.period ? own : document;
-      if (!found.period) return { ok: false, reason: 'no_period', periodCandidates: document.candidates };
+      if (!found.period) {
+        return {
+          ok: false,
+          reason: 'no_period',
+          periodCandidates: document.candidates,
+          sections: sections.map((s) => ({ ...(s.kind ? { kind: s.kind } : {}), line: s.lines[0]! })),
+        };
+      }
       read.push(readAccount(lines, section, found.period, found.source!));
     }
 
@@ -452,14 +466,57 @@ export const genericParser: StatementParser = {
 
 /** Validation again after unread lines were added: they can only make it weaker. */
 function revalidate(statement: ReadAccount['statement']): StatementValidation {
-  const checks = statement.validation.checks.map((c) =>
-    c.label === EVERY_ROW_READ ? { ...c, passed: false } : c,
-  );
-  const failed = statement.validation.status === 'failed';
-  return { status: failed ? 'failed' : checks.some((c) => c.passed === true) ? 'partially_verified' : 'unverified', checks };
+  const checks = statement.validation.checks.map((c) => (c.label === EVERY_ROW_READ ? { ...c, passed: false } : c));
+  return { status: statusOf(checks), checks };
 }
 
+const BALANCES_ADD_UP = 'Opening balance plus activity equals closing balance';
 const EVERY_ROW_READ = 'Every row was read';
+const ONE_ACCOUNT = "Only one account's balances on this statement";
+/** A failure of any of these means the statement doesn't add up. */
+const RECONCILIATION_CHECKS = new Set([
+  BALANCES_ADD_UP,
+  'Every row agrees with the running balance',
+  'Each section adds up to the total printed in its heading',
+  ONE_ACCOUNT,
+]);
+
+/**
+ * "Verified" only when the opening balance plus the activity read was
+ * actually compared with the closing balance and matched, and every row was
+ * read. If that comparison couldn't be made, the statement is "unverified",
+ * whatever else passed.
+ */
+function statusOf(checks: StatementValidation['checks']): StatementValidation['status'] {
+  if (checks.some((c) => RECONCILIATION_CHECKS.has(c.label) && c.passed === false)) return 'failed';
+  if (checks.find((c) => c.label === BALANCES_ADD_UP)?.passed !== true) return 'unverified';
+  return checks.find((c) => c.label === EVERY_ROW_READ)?.passed === true ? 'verified' : 'partially_verified';
+}
+
+/**
+ * Whether the balance lines in this account section belong to one account:
+ * every opening balance printed is the same amount, as is every closing
+ * balance, and no balance line lists several amounts (as an all-accounts
+ * summary does). Null when no balance line is printed. Catches two accounts
+ * that weren't split apart, so they can never be reconciled together.
+ */
+function balancesOfOneAccount(lines: TextLine[]): boolean | null {
+  const opening = new Set<Cents>();
+  const closing = new Set<Cents>();
+  let several = false;
+  for (const line of lines) {
+    const { rest } = leadingDates(line.pieces);
+    const { amounts, rest: middle } = trailingAmounts(rest);
+    const label = middle.map((p) => p.text).join(' ').trim();
+    const isOpening = OPENING_LABEL.test(label);
+    if ((!isOpening && !CLOSING_LABEL.test(label)) || amounts.length === 0) continue;
+    if (amounts.length > 1 && !(amounts.length === 2 && leadingDates(line.pieces).dates.length > 0)) several = true;
+    const amount = readAmount(amounts[amounts.length - 1]!.text);
+    if (amount) (isOpening ? opening : closing).add(signed(amount));
+  }
+  if (opening.size + closing.size === 0 && !several) return null;
+  return !several && opening.size <= 1 && closing.size <= 1;
+}
 
 function validate(
   transactions: ParsedTransaction[],
@@ -469,6 +526,7 @@ function validate(
     isCard: boolean;
     unreadLines: number[];
     sectionTotals: SectionTotal[];
+    oneAccount: boolean | null;
   },
 ): StatementValidation {
   const checks: StatementValidation['checks'] = [];
@@ -483,7 +541,7 @@ function validate(
       const expected = facts.isCard ? facts.openingBalanceCents - activity : facts.openingBalanceCents + activity;
       balancesMatch = expected === facts.closingBalanceCents;
     }
-    checks.push({ label: 'Opening balance plus activity equals closing balance', passed: balancesMatch });
+    checks.push({ label: BALANCES_ADD_UP, passed: balancesMatch });
   } else {
     checks.push({ label: 'Opening and closing balances printed on the statement', passed: null });
   }
@@ -506,15 +564,7 @@ function validate(
       : null;
     checks.push({ label: 'Each section adds up to the total printed in its heading', passed: totalsMatch });
   }
+  checks.push({ label: ONE_ACCOUNT, passed: facts.oneAccount });
   checks.push({ label: EVERY_ROW_READ, passed: facts.unreadLines.length === 0 && allKnown });
-
-  const failed = balancesMatch === false || runningMismatch || totalsMatch === false;
-  const status = failed
-    ? 'failed'
-    : balancesMatch === true && facts.unreadLines.length === 0 && allKnown
-      ? 'verified'
-      : balancesMatch === true || facts.unreadLines.length === 0
-        ? 'partially_verified'
-        : 'unverified';
-  return { status, checks };
+  return { status: statusOf(checks), checks };
 }

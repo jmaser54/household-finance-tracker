@@ -79,11 +79,20 @@ export interface AccountSection {
 }
 
 /**
- * An account heading: a line naming a checking or savings account and its
- * number (on the line or the next one), with no date or amount on it, so
- * neither a transaction row nor a line of an "all accounts" summary table.
+ * A heading that names only the account type, with no number: "Checking
+ * Summary", "SAVINGS ACCOUNT ACTIVITY", "Everyday Checking Account". Up to
+ * three words of name before the type; nothing but a section word after it.
  */
-function headingAt(lines: TextLine[], i: number): { kind: AccountKind; last4: string } | null {
+const TYPE_HEADING =
+  /^(?:[a-z][a-z'&-]*\s+){0,3}(checking|savings|money market)(?:\s+account)?(?:\s+(?:summary|activity|details|transactions|transaction history|statement))?(?:\s*\(continued\))?$/i;
+
+/**
+ * An account heading: a line naming a checking or savings account, with no
+ * date or amount on it, so neither a transaction row nor a line of an "all
+ * accounts" summary table. Its number is on the line or the next one, if
+ * printed there; a heading naming only the type has none (`last4` undefined).
+ */
+function headingAt(lines: TextLine[], i: number): { kind: AccountKind; last4?: string } | null {
   const text = lines[i]!.text;
   if (text.length > 120 || LEADING_DATE.test(text) || AMOUNT_TOKEN.test(text)) return null;
   const match = BANK_KIND.exec(text);
@@ -98,8 +107,9 @@ function headingAt(lines: TextLine[], i: number): { kind: AccountKind; last4: st
   if (!last4 && next && !LEADING_DATE.test(next.text) && !AMOUNT_TOKEN.test(next.text) && !BANK_KIND.test(next.text)) {
     last4 = findLast4(next.text);
   }
-  if (!last4) return null;
-  return { kind: kind === 'checking' ? 'checking' : 'savings', last4 };
+  const type: AccountKind = kind === 'checking' ? 'checking' : 'savings';
+  if (last4) return { kind: type, last4 };
+  return TYPE_HEADING.test(text.trim()) ? { kind: type } : null;
 }
 
 /**
@@ -109,12 +119,20 @@ function headingAt(lines: TextLine[], i: number): { kind: AccountKind; last4: st
  * accounts) and belong to no account.
  */
 export function splitAccounts(lines: TextLine[]): { preamble: number[]; sections: AccountSection[] } {
-  const headings: { at: number; kind: AccountKind; last4: string }[] = [];
+  const headings: { at: number; kind: AccountKind; last4?: string }[] = [];
   lines.forEach((_, i) => {
     const heading = headingAt(lines, i);
     if (heading) headings.push({ at: i, ...heading });
   });
-  const identities = new Set(headings.map((h) => `${h.kind}:${h.last4}`));
+  // A type-only heading ("Checking Summary") belongs to the one numbered account
+  // of that type, if the statement names exactly one; otherwise it stands for
+  // its type alone, and its number is looked for inside its section.
+  for (const heading of headings) {
+    if (heading.last4) continue;
+    const numbers = new Set(headings.filter((h) => h.kind === heading.kind && h.last4).map((h) => h.last4));
+    if (numbers.size === 1) heading.last4 = [...numbers][0]!;
+  }
+  const identities = new Set(headings.map((h) => `${h.kind}:${h.last4 ?? ''}`));
   const all = lines.map((_, i) => i);
   if (identities.size < 2) return { preamble: [], sections: [{ lines: all }] };
 
@@ -122,8 +140,8 @@ export function splitAccounts(lines: TextLine[]): { preamble: number[]; sections
   const byIdentity = new Map<string, AccountSection>();
   headings.forEach((heading, n) => {
     const end = headings[n + 1]?.at ?? lines.length;
-    const key = `${heading.kind}:${heading.last4}`;
-    const section = byIdentity.get(key) ?? { kind: heading.kind, last4: heading.last4, lines: [] };
+    const key = `${heading.kind}:${heading.last4 ?? ''}`;
+    const section = byIdentity.get(key) ?? { kind: heading.kind, ...(heading.last4 ? { last4: heading.last4 } : {}), lines: [] };
     for (let i = heading.at; i < end; i++) section.lines.push(i);
     byIdentity.set(key, section);
   });

@@ -80,7 +80,13 @@ export type ParseFailure =
  */
 export type ParseOutcome =
   | { ok: true; statements: ParsedStatement[]; score: number }
-  | { ok: false; reason: ParseFailure; periodCandidates?: { line: number; dates: number }[] };
+  | {
+      ok: false;
+      reason: ParseFailure;
+      periodCandidates?: { line: number; dates: number }[];
+      /** The account sections found (type and first line), even though reading stopped. */
+      sections?: { kind?: AccountKind; line: number }[];
+    };
 
 /** Statement layouts are read by modular parsers behind this interface. */
 export interface StatementParser {

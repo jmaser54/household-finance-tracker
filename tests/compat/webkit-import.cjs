@@ -17,7 +17,7 @@ const dir = 'tests/fixtures/synthetic';
 const statements = [
   'checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-2026-03.pdf', 'card-2026-03.pdf', 'card-2025-12.pdf',
   'combined-checking-savings-2026-03.pdf', 'card-closing-date-totals-2026-04.pdf', 'card-bare-headings-2026-04.pdf',
-  'checking-worded-period-2026-03.pdf',
+  'checking-worded-period-2026-03.pdf', 'combined-summaries-2026-03.pdf',
 ]
   .map((f) => `${dir}/${f}`)
   .concat(readdirSync(`${dir}/structure`).filter((f) => f.endsWith('.pdf') && !f.startsWith('requires-user')).map((f) => `${dir}/structure/${f}`));
@@ -75,8 +75,8 @@ const statements = [
   console.log(workerStarted ? 'pdf.js worker started' : 'pdf.js worker did NOT start');
   if (!workerStarted) ok = false;
   await browser.close();
-  // One card per account: the combined statement gives two.
-  if (cards.length !== statements.length + 1 || !ok) {
+  // One card per account: each of the two combined statements gives two.
+  if (cards.length !== statements.length + 2 || !ok) {
     console.error(`WebKit ${engineVersion} could not read ${cards.filter((c) => c.status !== 'parsed').length} of ${statements.length} statements.`);
     process.exit(1);
   }

@@ -371,9 +371,20 @@ function StatementCard({
       ) : (
         <>
           {status === 'verified' && <p class="form-success">✓ Every line was read and the balances match the statement.</p>}
-          {status === 'partially_verified' && <p class="hint">The balances were checked, but not every line could be confirmed.</p>}
+          {status === 'partially_verified' && (
+            <p class="hint">
+              The transactions add up to the statement's balances, but not every line could be read, so this statement
+              isn't fully verified.
+            </p>
+          )}
           {status === 'unverified' && (
-            <p class="hint">This statement doesn't print opening and closing balances, so the totals couldn't be checked.</p>
+            <p class="hint">
+              <strong>Unverified.</strong> The transactions couldn't be checked against the statement's opening and
+              closing balances
+              {s.openingBalanceCents === undefined || s.closingBalanceCents === undefined
+                ? ', because the statement does not print both.'
+                : ', because the money-in or money-out of some lines could not be determined.'}
+            </p>
           )}
           {status === 'failed' && (
             <div class="warning">

@@ -84,11 +84,23 @@ function statementFacts(text: PdfText, statement: ParsedStatement, number: numbe
 export function describeRead(text: PdfText, outcome: ParseOutcome): string[] {
   const out: string[] = [];
   if (outcome.ok) {
-    if (outcome.statements.length > 1) {
-      out.push(`Accounts found in this PDF: ${outcome.statements.length} (${outcome.statements.map((s) => (s.accountKind ? KIND_TEXT[s.accountKind] : 'unknown')).join(', ')})`);
-    }
+    out.push(
+      outcome.statements.length > 1
+        ? `Accounts found in this PDF: ${outcome.statements.length} (${outcome.statements.map((s) => (s.accountKind ? KIND_TEXT[s.accountKind] : 'unknown')).join(', ')})`
+        : 'Accounts found in this PDF: 1 (not split)',
+    );
     outcome.statements.forEach((s, i) => out.push(...statementFacts(text, s, i + 1)));
   } else if (outcome.periodCandidates) {
+    const sections = outcome.sections ?? [];
+    if (sections.length > 1) {
+      out.push(`Account sections found: ${sections.length}. Their headings:`);
+      for (const section of sections) {
+        const l = text.lines[section.line];
+        if (l) out.push(`  p${l.page} [${section.kind ? KIND_TEXT[section.kind] : 'unknown'}]  ${maskLine(l)}`);
+      }
+    } else {
+      out.push('Account sections found: 1 (not split)');
+    }
     out.push('Statement period not found. Lines that looked like they might hold it:');
     if (outcome.periodCandidates.length === 0) out.push('  (none)');
     for (const candidate of outcome.periodCandidates.slice(0, 20)) {

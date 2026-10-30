@@ -99,6 +99,18 @@ function rangeIn(text: string): Period | null {
   return null;
 }
 
+/** A range that is the whole line: nothing else but its two dates, a separator and punctuation. */
+function aloneRange(text: string): Period | null {
+  const range = rangeIn(text);
+  if (!range) return null;
+  const rest = text
+    .replace(RANGE_YEAR_ONCE, ' ')
+    .replace(FULL_DATE, ' ')
+    .replace(new RegExp(SEPARATOR, 'gi'), ' ')
+    .replace(/[\s,.:;()]/g, '');
+  return rest === '' ? range : null;
+}
+
 export interface PeriodResult {
   period: Period | null;
   source?: PeriodSource;
@@ -126,6 +138,13 @@ export function findPeriod(lines: TextLine[], limit = 80): PeriodResult {
     if (!labelled) continue;
     const range = rangeIn(text);
     if (range) return { period: range, source: 'range', candidates };
+  }
+
+  // 1b. A range alone on its line, with no label ("March 1, 2026 through March 31, 2026"),
+  // as some banks print under their name on every page. If such lines disagree, nothing is guessed.
+  const alone = top.map((line) => aloneRange(line.text)).filter((r): r is Period => r !== null);
+  if (alone.length && alone.every((r) => r.start === alone[0]!.start && r.end === alone[0]!.end)) {
+    return { period: alone[0]!, source: 'range', candidates };
   }
 
   // 2 and 3. Separately printed dates.

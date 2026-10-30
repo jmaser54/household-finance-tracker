@@ -112,6 +112,33 @@ describe('layouts found on real statements (synthetic copies)', () => {
     expect(savings!.validation.status).toBe('verified');
   });
 
+  it('a combined statement with an unlabelled period line on every page and "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings', async () => {
+    const outcome = await read('combined-summaries-2026-03.pdf');
+    if (outcome.status !== 'parsed') throw new Error(outcome.status);
+    const [checking, savings] = outcome.statements;
+    expect(outcome.statements).toHaveLength(2);
+    expect(checking).toMatchObject({ accountKind: 'checking', last4: '4821', periodStart: '2026-03-01', periodEnd: '2026-03-31', openingBalanceCents: 320_000, closingBalanceCents: 846_483 });
+    expect(rows(checking!)).toEqual([
+      ['2026-03-02', 'EXAMPLE GROCER', -6_412],
+      ['2026-03-06', 'TRANSFER TO SAVINGS', -25_000],
+      ['2026-03-13', 'PAYROLL EXAMPLE EMPLOYER INC', 285_000],
+      ['2026-03-20', 'EXAMPLE PHARMACY', -2_275],
+      ['2026-03-27', 'PAYROLL EXAMPLE EMPLOYER INC', 285_000],
+      ['2026-03-30', 'EXAMPLE UTILITY CO', -9_830],
+    ]);
+    expect(savings).toMatchObject({ accountKind: 'savings', last4: '7310', openingBalanceCents: 640_000, closingBalanceCents: 665_512 });
+    expect(rows(savings!)).toEqual([
+      ['2026-03-06', 'TRANSFER FROM CHECKING', 25_000],
+      ['2026-03-31', 'INTEREST PAID', 512],
+    ]);
+    for (const s of outcome.statements) {
+      expect(s.validation.status).toBe('verified');
+      expect(s.validation.checks.every((c) => c.passed !== false)).toBe(true);
+    }
+    // The period line masks exactly as on the household's statements.
+    expect(outcome.diagnostics).toContain('  p1  MONTH NUMBER NUMBER through MONTH NUMBER NUMBER');
+  });
+
   it('a card with its period as closing date plus days, totals in headings and an undated interest line', async () => {
     const s = await parsed('card-closing-date-totals-2026-04.pdf');
     expect(s).toMatchObject({ accountKind: 'credit_card', last4: '9046', periodStart: '2026-03-16', periodEnd: '2026-04-13', periodSource: 'closing_date_and_cycle_days' });
@@ -184,6 +211,7 @@ describe('masked diagnostics never reveal values', () => {
   it.each([
     ['combined-checking-savings-2026-03.pdf', ['4821', '7310', '5313', '5512', '2,500.00', '7,296.34', 'PAYROLL', 'GROCER', 'Everyday', 'Example', '03/31/2026']],
     ['card-closing-date-totals-2026-04.pdf', ['9046', '1,312.50', '1,250.00', '14.27', '21.49', 'GROCER', 'Rewards', '04/13/2026', '29']],
+    ['combined-summaries-2026-03.pdf', ['4821', '7310', '3,200.00', '8,464.83', '6,400.00', 'Jordan', 'Casey', 'Hometown', 'GROCER', 'March', '2026']],
     ['card-bare-headings-2026-04.pdf', ['2208', '400.00', 'AUTOPAY', 'BOOKSTORE', 'Travel', 'March', 'April', '2026']],
   ])('%s: the facts about how it was read contain no values', async (name, secrets) => {
     const outcome = await read(name);

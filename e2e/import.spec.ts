@@ -127,3 +127,13 @@ test('a combined checking and savings PDF is reviewed as two accounts; an undate
   await expect(page.getByText('This statement was already added')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Add 0 transactions' })).toBeDisabled();
 });
+
+test('a combined statement with an unlabelled period and summary headings is two verified accounts', async ({ page }) => {
+  await createHousehold(page);
+  await choose(page, ['combined-summaries-2026-03.pdf']);
+  await expect(page.getByText('Checking ending 4821 · March 1, 2026 to March 31, 2026')).toBeVisible();
+  await expect(page.getByText('Savings ending 7310 · March 1, 2026 to March 31, 2026')).toBeVisible();
+  await expect(page.locator('[data-validation="verified"]')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Add 8 transactions' }).click();
+  await expect(page.getByText(/Added 8 transactions from 2 statements\./)).toBeVisible();
+});

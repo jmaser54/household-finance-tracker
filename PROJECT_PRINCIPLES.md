@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.7: combined statements, periods, card sections, stricter reconciliation)
+**Last reviewed:** 2026-10-30 (v2.8: unlabelled periods, type-only account headings, "verified" means reconciled)
 
 ## How to use this document
 
@@ -281,6 +281,8 @@ These are the contract for every calculation. Each is covered by automated tests
 - Every dashboard total is traceable to its transactions.
 - Original descriptions are preserved alongside normalized merchants.
 - Statement validation results stay stored and visible.
+- **"Verified" means reconciled.** A statement is *verified* only when its opening balance plus the activity read equals its closing balance, every row was read, and no other check failed. If that comparison can't be made (no printed balances, or a row whose sign is unknown), it is *unverified*, and the app says so. If balances add up but a line couldn't be read, it is *partially verified*, never verified. Any failed check makes it *failed*.
+- Two accounts are never reconciled together. A statement whose balance lines belong to more than one account fails.
 
 ## 13. Dashboard and reporting
 
@@ -404,7 +406,10 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - every period wording listed in `docs/ARCHITECTURE.md` §9, including closing date + days in cycle; nothing guessed when the dates aren't printed;
   - card headings printing totals and bare "PAYMENTS" headings give payments the right sign; interest-rate tables and year-to-date totals are skipped;
   - undated interest and fee lines added on the closing date, flagged and marked for review;
-  - reconciliation fails when a row is unread, printed twice, or a payment is read as a purchase (caught by section totals even when balances happen to agree), and a row with no sign evidence is never counted.
+  - reconciliation fails when a row is unread, printed twice, or a payment is read as a purchase (caught by section totals even when balances happen to agree), and a row with no sign evidence is never counted;
+  - a period printed alone on its line with no label ("March 1, 2026 through March 31, 2026", masked `MONTH NUMBER NUMBER through MONTH NUMBER NUMBER`), repeated on each page; disagreeing unlabelled ranges give no period;
+  - combined statements with "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings and every heading variant traced, including no printed number; two accounts that can't be split, or an all-accounts balance line, fail;
+  - "verified" only when the balances were reconciled: no balances, one balance, or an unknown sign is *unverified*; an unread line is at most *partially verified*.
 - In the app's oldest engine (CI): with the built-ins Monterey's WebKit lacks removed from the page and the worker, statements still import (Chromium); every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
 - When a file can't be read, "Technical details (no statement contents)" names the step that failed, the error type with digits and quoted text removed, structural facts about the file and the engine's features. A test checks it contains none of the synthetic statements' values.
 - Planning and adding (`src/import/plan.test.ts`):
@@ -468,6 +473,13 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.8.** The household's statements still reported "Statement period not found". Security requirements and §10 financial rules are unchanged.
+  - Root cause: the period line is printed alone, with no label word, and the detector required one. Such a line is now accepted, when all of them agree.
+  - Root cause, combined statement: reading stopped at the period before any account split, so the split was never reached. Headings that name only the type ("Checking Summary") now start an account section.
+  - Two accounts' balances in one section now fail the statement instead of being silently merged.
+  - "Verified" now requires a reconciliation that actually passed (§12); otherwise "unverified", with an explanation.
+  - Diagnostics report the account sections found even when no period is found.
 
 - **2026-10-30, v2.7.** Fixes from the household's first real statements, investigated through masked diagnostics only. Security requirements and §10 financial rules are unchanged.
   - A PDF holding several accounts gives one independently reconciled statement per account.

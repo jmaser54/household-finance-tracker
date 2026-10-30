@@ -345,3 +345,163 @@ describe('balance lines inside the table', () => {
     expect(s.validation.checks).toContainEqual({ label: 'Every row agrees with the running balance', passed: true });
   });
 });
+
+describe('combined statements whose headings name only the account type', () => {
+  const RANGE = 'March 1, 2026 through March 31, 2026';
+  const build = (checkingHead: string[], savingsHead: string[], savingsEnding = '$5,010.00') =>
+    doc([
+      'Example Community Bank',
+      RANGE,
+      ...checkingHead,
+      labelled('Beginning balance on March 1, 2026', '$1,000.00'),
+      labelled('Ending balance on March 31, 2026', '$900.00'),
+      [['Date', 40], ['Description', 90], at('Amount', 480), at('Balance', 560)],
+      [['03/05', 40], ['EXAMPLE GROCER', 90], at('-100.00', 480), at('900.00', 560)],
+      'page',
+      RANGE,
+      ...savingsHead,
+      labelled('Beginning balance on March 1, 2026', '$5,000.00'),
+      labelled('Ending balance on March 31, 2026', savingsEnding),
+      [['Date', 40], ['Description', 90], at('Amount', 480), at('Balance', 560)],
+      [['03/31', 40], ['INTEREST PAID', 90], at('10.00', 480), at('5,010.00', 560)],
+    ]);
+  const read = (d: ReturnType<typeof doc>) => {
+    const outcome = genericParser.parse(d);
+    if (!outcome.ok) throw new Error(outcome.reason);
+    return outcome.statements.map((s) => [s.accountKind, s.last4, s.validation.status]);
+  };
+
+  it.each([
+    ['summary headings, number on a later line', ['Checking Summary', 'Account number 000012344821'], ['Savings Summary', 'Account number 000012347310']],
+    ['summary headings with the number on them', ['Everyday Checking Summary  Account XXXXXX4821'], ['Everyday Savings Summary  Account XXXXXX7310']],
+    ['name heading, number on the next line', ['Everyday Checking', 'Account number XXXXXX4821'], ['Everyday Savings', 'Account number XXXXXX7310']],
+    ['summary heading, then the name and number', ['CHECKING SUMMARY', 'Everyday Checking', 'Account number XXXXXX4821'], ['SAVINGS SUMMARY', 'Everyday Savings', 'Account number XXXXXX7310']],
+    ['name and number in separate pieces', ['Everyday Checking   XXXXXX4821'], ['Everyday Savings   XXXXXX7310']],
+  ])('%s: two accounts, each verified', (_name, checkingHead, savingsHead) => {
+    expect(read(build(checkingHead, savingsHead))).toEqual([
+      ['checking', '4821', 'verified'],
+      ['savings', '7310', 'verified'],
+    ]);
+  });
+
+  it.each([
+    ['"CHECKING SUMMARY" with no number', ['CHECKING SUMMARY'], ['SAVINGS SUMMARY']],
+    ['"Checking Account Summary" with no number', ['Checking Account Summary'], ['Savings Account Summary']],
+  ])('%s: still two accounts, each verified, with no number to match', (_name, checkingHead, savingsHead) => {
+    expect(read(build(checkingHead, savingsHead))).toEqual([
+      ['checking', undefined, 'verified'],
+      ['savings', undefined, 'verified'],
+    ]);
+  });
+
+  it('the number printed after the balances is found within each section', () => {
+    const section = (heading: string, opening: string, ending: string, number: string, row: Piece[]): (string | Piece[])[] => [
+      heading,
+      labelled('Beginning balance on March 1, 2026', opening),
+      labelled('Ending balance on March 31, 2026', ending),
+      `Account number: XXXXXXXX${number}`,
+      [['Date', 40], ['Description', 90], at('Amount', 480), at('Balance', 560)],
+      row,
+    ];
+    const d = doc([
+      'Example Community Bank',
+      RANGE,
+      ...section('CHECKING SUMMARY', '$1,000.00', '$900.00', '4821', [['03/05', 40], ['EXAMPLE GROCER', 90], at('-100.00', 480), at('900.00', 560)]),
+      ...section('SAVINGS SUMMARY', '$5,000.00', '$5,010.00', '7310', [['03/31', 40], ['INTEREST PAID', 90], at('10.00', 480), at('5,010.00', 560)]),
+    ]);
+    expect(read(d)).toEqual([
+      ['checking', '4821', 'verified'],
+      ['savings', '7310', 'verified'],
+    ]);
+  });
+
+  it('two accounts that could not be split are failed, never reconciled together', () => {
+    const d = build(['Details for your Primary Checking'], ['Details for your Primary Savings']);
+    const outcome = genericParser.parse(d);
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.statements).toHaveLength(1);
+    const s = outcome.statements[0]!;
+    expect(s.validation.checks).toContainEqual({ label: "Only one account's balances on this statement", passed: false });
+    expect(s.validation.status).toBe('failed');
+  });
+
+  it('an all-accounts balance line listing several amounts in one account is failed', () => {
+    const s = one([
+      'Everyday Checking   Account number XXXXXX4821',
+      'Statement period 03/01/2026 to 03/31/2026',
+      [['Beginning balance', 40], at('1,000.00', 480), at('5,000.00', 560)],
+      labelled('Ending balance', '900.00'),
+      BANK_HEADER,
+      out('03/05', 'EXAMPLE GROCER', '100.00', '900.00'),
+    ]);
+    expect(s.validation.status).toBe('failed');
+  });
+
+  it('when no period is found, the account sections found are still reported', () => {
+    const d = doc([
+      'Example Community Bank',
+      'CHECKING SUMMARY',
+      labelled('Beginning balance', '$1,000.00'),
+      labelled('Ending balance', '$900.00'),
+      'SAVINGS SUMMARY',
+      labelled('Beginning balance', '$5,000.00'),
+      labelled('Ending balance', '$5,010.00'),
+    ]);
+    expect(genericParser.parse(d)).toMatchObject({ ok: false, reason: 'no_period', sections: [{ kind: 'checking', line: 1 }, { kind: 'savings', line: 4 }] });
+  });
+});
+
+describe('"verified" only when the balances were actually reconciled', () => {
+  const statement = (balances: Piece[][], rows: Piece[][]) =>
+    one([
+      'Everyday Checking   Account number XXXXXX4821',
+      'Statement period 03/01/2026 to 03/31/2026',
+      ...balances,
+      [['Date', 40], ['Description', 90], at('Amount', 480)],
+      ...rows,
+    ]);
+  const row = (text: string, amount: string): Piece[] => [['03/02', 40], [text, 90], at(amount, 480)];
+
+  it('no printed balances: unverified, even though every row was read', () => {
+    const s = statement([], [row('EXAMPLE GROCER', '-100.00')]);
+    expect(s.unreadLines).toEqual([]);
+    expect(s.validation.status).toBe('unverified');
+  });
+
+  it('only an opening balance: unverified', () => {
+    expect(statement([labelled('Beginning balance', '1,000.00')], [row('EXAMPLE GROCER', '-100.00')]).validation.status).toBe('unverified');
+  });
+
+  it('a row whose sign is unknown, so the balances could not be compared: unverified, not partially verified', () => {
+    const s = statement([labelled('Beginning balance', '1,000.00'), labelled('Ending balance', '900.00')], [row('EXAMPLE GROCER', '100.00')]);
+    expect(s.validation.checks).toContainEqual({ label: 'Opening balance plus activity equals closing balance', passed: null });
+    expect(s.validation.status).toBe('unverified');
+  });
+
+  it('balances that add up but an unread line: partially verified, never verified', () => {
+    const s = statement(
+      [labelled('Beginning balance', '1,000.00'), labelled('Ending balance', '900.00')],
+      [row('EXAMPLE GROCER', '-100.00'), [['NOTE WITH AN AMOUNT', 90], at('-3.00', 480)]],
+    );
+    expect(s.validation.status).toBe('partially_verified');
+  });
+
+  it('a stray row outside every account section: never verified', () => {
+    const outcome = genericParser.parse(
+      doc([
+        'Statement Period: 03/01/2026 through 03/31/2026',
+        [['03/02', 40], ['STRAY ROW', 90], at('5.00', 400)],
+        'Everyday Checking - Account ending in 4821',
+        labelled('Beginning Balance', '1,000.00'),
+        labelled('Ending Balance', '900.00'),
+        [['Date', 40], ['Description', 90], at('Amount', 480)],
+        [['03/05', 40], ['EXAMPLE GROCER', 90], at('-100.00', 480)],
+        'Everyday Savings - Account ending in 7310',
+        labelled('Beginning Balance', '10.00'),
+        labelled('Ending Balance', '10.00'),
+      ]),
+    );
+    if (!outcome.ok) throw new Error(outcome.reason);
+    expect(outcome.statements[0]!.validation.status).not.toBe('verified');
+  });
+});

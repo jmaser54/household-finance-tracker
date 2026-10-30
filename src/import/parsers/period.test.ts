@@ -38,6 +38,33 @@ describe('a printed range', () => {
   });
 });
 
+describe('a range alone on its line, with no label', () => {
+  // As the household's statements print it: masked, "MONTH NUMBER NUMBER through MONTH NUMBER NUMBER".
+  it('is the period', () => {
+    expect(period('Example Community Bank', 'Jordan Example', 'March 1, 2026 through March 31, 2026')).toEqual({
+      start: '2026-03-01',
+      end: '2026-03-31',
+      source: 'range',
+    });
+    expect(period('Example Bank', '03/01/2026 - 03/31/2026')).toMatchObject({ start: '2026-03-01', end: '2026-03-31' });
+  });
+
+  it('is the period when the same line repeats on every page', () => {
+    const lines = doc(['Example Bank', 'March 1, 2026 through March 31, 2026', 'page', 'Example Bank', 'March 1, 2026 through March 31, 2026']).lines;
+    expect(findPeriod(lines).period).toEqual({ start: '2026-03-01', end: '2026-03-31' });
+  });
+
+  it('is not used when two such lines disagree: nothing is guessed', () => {
+    expect(period('March 1, 2026 through March 31, 2026', 'April 1, 2026 through April 30, 2026')).toBeNull();
+  });
+
+  it('a labelled range is preferred to an unlabelled one', () => {
+    expect(period('February 1, 2026 through February 28, 2026', 'Statement period 03/01/2026 to 03/31/2026')).toMatchObject({
+      start: '2026-03-01',
+    });
+  });
+});
+
 describe('separately printed dates', () => {
   it('uses an opening date and a closing date', () => {
     expect(period('Opening Date 02/14/2026', 'Closing Date 03/13/2026')).toEqual({
@@ -65,7 +92,7 @@ describe('nothing is guessed', () => {
     [['Closing Date 03/13/2026']],
     [['Statement date 03/31/2026']],
     [['Statement period March 2026']],
-    [['03/01/2026 - 03/31/2026']],
+    [['Offer valid March 1, 2026 through April 30, 2026']],
   ])('%j has no period', (lines) => {
     expect(period(...lines)).toBeNull();
   });

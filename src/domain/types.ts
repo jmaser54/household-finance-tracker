@@ -133,6 +133,12 @@ export interface Transaction {
   dedupeKey: string;
 }
 
+/**
+ * PROJECT_PRINCIPLES.md §12. "verified": the opening balance plus the
+ * activity read equals the closing balance and every row was read.
+ * "partially_verified": they add up, but a line could not be read.
+ * "unverified": that comparison could not be made. "failed": a check failed.
+ */
 export type ValidationStatus = 'verified' | 'partially_verified' | 'unverified' | 'failed';
 
 export interface StatementValidation {
