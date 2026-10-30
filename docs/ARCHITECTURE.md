@@ -254,7 +254,14 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
      - **Running balance printed only on a day's last row:** the rows since the previous printed balance are settled only if exactly one choice of in/out gives the printed change; if several fit they stay unknown, and if none fits the row is flagged as disagreeing with the running balance.
      - **Signed Amount column** (bank accounts only): when a single Amount column prints a minus on money going out, an amount in it with no sign is money coming in. Used only when nothing else settled the row; the balances must still reconcile for the statement to be verified.
    - **Undated interest and fee lines** (e.g. "INTEREST CHARGE ON PURCHASES 14.27" with no date) are added with the statement's closing date, flagged "date assigned", and always marked for review, with the printed description and amount kept. Any other undated line with an amount is reported unread.
-   - **Not transactions:** interest-rate tables (a percentage or APR) and year-to-date totals are skipped.
+   - **Set aside as not transactions**, each by a specific pattern, and every one listed (masked, with its kind) in the diagnostics:
+     - page footers and headers ("03/31/2026  Page 2 of 3", the period repeated atop a page);
+     - balance summaries ("Average daily balance", "Minimum balance");
+     - interest and fee summaries ("Interest earned this period", "Fees charged this year", "Annual percentage yield");
+     - interest-rate tables (a percentage or APR) and year-to-date totals;
+     - lines whose amounts are all zero ("Overdraft fees $0.00 $0.00");
+     - daily balance tables (only dates and balances). **These are checked:** each printed daily balance must equal the opening balance plus every row up to that day, or the statement fails.
+     - Anything else with an amount and no date (e.g. "Check 1042 03/27 300.00", an undated "Monthly service charge") stays *unread*: it could be a transaction. A transaction wrongly set aside would make the balances disagree, so the statement would fail rather than verify.
    - **Validation:**
      - opening balance plus activity must equal the closing balance (for cards, the balance owed);
      - each row is checked against the running balance;
@@ -289,6 +296,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - **Checking** from a bank named "… Savings and Loan", with "For the period beginning … and ending …" and dated Beginning/Ending Balance rows.
 - **Checking** with each section heading above its own column header, unsigned amounts and no running balance ("Primary Account: 000…4821").
 - **Savings** with one minus-marked Amount column and a balance printed only on each day's last row.
+- **Checking** over three pages with dated "Page N of 3" footers, the period repeated atop each page, an average balance, an interest summary, a fee table of zeros and a daily ending balance table.
 - **Combined checking and savings** with the period alone on a line on every page, "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings, each number printed after its balances, and an all-accounts balance line.
 
 **Not supported yet:**
@@ -309,7 +317,8 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - When a statement can't be read, has unread lines or fails its balance checks, the review screen offers **"Show what the app saw (all values hidden)"** (`src/import/diagnostics.ts`), shown on screen only:
   - every date, amount, number, month name and word becomes `DATE`, `AMOUNT`, `NUMBER`, `MONTH` or `TEXT`; only layout words such as "Balance", "Payments" or "through" remain;
   - for each statement (each account of a combined one): its type, whether a number, opening and closing balance were found (not what they are), how the period was found, how many rows took their sign from each kind of evidence, how many dates were assigned, and the result of each check;
-  - every unread line, masked, with a reason code;
+  - every unread line, masked, with a reason code, the column its amounts fall under, whether it sits before, between or after the rows, and the section it is in;
+  - every line set aside as not a transaction, masked, with its kind;
   - when no period is found, the lines that looked like they might hold it, masked, with how many dates each held, and the account sections found (type and masked heading).
 - You can copy or describe that masked shape. A matching synthetic fixture and parser change can then be written without any real document leaving the Mac.
 

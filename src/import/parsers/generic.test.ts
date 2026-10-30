@@ -627,3 +627,115 @@ describe('money in or out: evidence the statement prints, read in more layouts',
     expect(s.validation.status).toBe('failed');
   });
 });
+
+describe('lines that are not transactions are recognised, listed and never counted', () => {
+  const statement = (extra: (string | Piece[] | 'page')[], ending = '850.00', where: 'middle' | 'end' = 'end') => {
+    const head: (string | Piece[] | 'page')[] = [
+      'Everyday Checking   Account number XXXXXX4821',
+      'Statement period 03/01/2026 to 03/31/2026',
+      labelled('Beginning balance', '1,000.00'),
+      labelled('Ending balance', ending),
+      BANK_HEADER,
+      out('03/02', 'EXAMPLE GROCER', '100.00', '900.00'),
+    ];
+    const last = [out('03/20', 'EXAMPLE PHARMACY', '50.00', '850.00')];
+    return one(where === 'middle' ? [...head, ...extra, ...last] : [...head, ...last, ...extra]);
+  };
+  const kinds = (s: ParsedStatement) => s.setAside.map((a) => a.kind);
+
+  it.each([
+    ['a dated page footer', ['page', [['03/31/2026', 40], ['Page 2 of 3', 300]]], 'page_header_or_footer'],
+    ['the numeric period repeated atop a page', ['page', [['03/01/2026 - 03/31/2026', 40]]], 'page_header_or_footer'],
+    ['an average daily balance', [labelled('Average daily balance', '912.50')], 'balance_summary'],
+    ['a minimum balance', [labelled('Minimum balance this period', '850.00')], 'balance_summary'],
+    ['interest earned this period', [labelled('Interest earned this period', '1.23')], 'interest_or_fee_summary'],
+    ['interest paid this year', [labelled('Interest paid this year', '4.56')], 'interest_or_fee_summary'],
+    ['a fee table of zeros', [[['Overdraft fees', 40], at('$0.00', 400), at('$0.00', 480)]], 'zero_amounts'],
+  ] as [string, (string | Piece[] | 'page')[], string][])('%s', (_name, extra, kind) => {
+    const s = statement(extra, '850.00', extra[0] === 'page' ? 'middle' : 'end');
+    expect(s.unreadLines).toEqual([]);
+    expect(kinds(s)).toEqual([kind]);
+    expect(s.transactions).toHaveLength(2);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a page footer is never joined onto the last row\'s description', () => {
+    const s = statement([[['Page 1 of 2', 300]]]);
+    expect(s.transactions[1]!.description).toBe('EXAMPLE PHARMACY');
+    expect(kinds(s)).toEqual(['page_header_or_footer']);
+  });
+
+  it('a daily balance table is set aside and checked against the transactions', () => {
+    const s = statement(['DAILY ENDING BALANCE', [['Date', 40], at('Balance', 200)], [['03/02', 40], at('900.00', 200)], [['03/20', 40], at('850.00', 200)]]);
+    expect(kinds(s)).toEqual(['daily_balance', 'daily_balance']);
+    expect(s.validation.checks).toContainEqual({ label: 'Every daily balance printed agrees with the transactions', passed: true });
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a daily balance table with several days on a line is never read as a transaction', () => {
+    const s = statement(['Daily Balance Summary', [['03/02', 40], at('900.00', 150), ['03/20', 200], at('850.00', 310)]]);
+    expect(s.transactions).toHaveLength(2);
+    expect(kinds(s)).toEqual(['daily_balance']);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a transaction table after a daily balance table is read normally', () => {
+    const s = one([
+      'Everyday Checking   Account number XXXXXX4821',
+      'Statement period 03/01/2026 to 03/31/2026',
+      labelled('Beginning balance', '1,000.00'),
+      labelled('Ending balance', '850.00'),
+      BANK_HEADER,
+      out('03/02', 'EXAMPLE GROCER', '100.00', '900.00'),
+      'DAILY ENDING BALANCE',
+      [['Date', 40], at('Balance', 200)],
+      [['03/02', 40], at('900.00', 200)],
+      'page',
+      BANK_HEADER,
+      out('03/20', 'EXAMPLE PHARMACY', '50.00', '850.00'),
+    ]);
+    expect(amounts(s)).toEqual([-10_000, -5_000]);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('a daily balance that disagrees with the transactions fails the statement', () => {
+    const s = statement(['DAILY ENDING BALANCE', [['03/02', 40], at('900.00', 150), ['03/20', 200], at('860.00', 310)]]);
+    expect(s.validation.checks).toContainEqual({ label: 'Every daily balance printed agrees with the transactions', passed: false });
+    expect(s.validation.status).toBe('failed');
+  });
+
+  it('an interest summary is never added as an undated interest charge', () => {
+    const s = one([
+      ...cardTop('500.00', '550.00'),
+      CARD_HEADER,
+      cardRow('02/22', 'EXAMPLE GROCER', '50.00'),
+      [['Interest charged this period', 160], at('12.34', 560)],
+    ]);
+    expect(s.transactions).toHaveLength(1);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('lines that could be transactions stay unread, with where they sit', () => {
+    const s = statement([[['Check 1042', 40], ['03/27', 120], at('300.00', 400)], labelled('Monthly service charge', '12.00')]);
+    expect(s.unreadReasons).toEqual(['no_date', 'no_date']);
+    expect(s.unreadContext).toEqual([
+      { amountColumns: ['debit'], position: 'after_rows', section: 'none' },
+      { amountColumns: ['balance'], position: 'after_rows', section: 'none' },
+    ]);
+    expect(s.validation.status).toBe('partially_verified');
+  });
+
+  it('a transaction wrongly taken for a summary would fail the balance check, not pass', () => {
+    // The 50.00 withdrawal is printed as an "average balance" style line: set aside, so the balances can't add up.
+    const s = one([
+      'Everyday Checking   Account number XXXXXX4821',
+      'Statement period 03/01/2026 to 03/31/2026',
+      labelled('Beginning balance', '1,000.00'),
+      labelled('Ending balance', '850.00'),
+      BANK_HEADER,
+      out('03/02', 'EXAMPLE GROCER', '100.00', '900.00'),
+      [['Average daily balance', 40], at('50.00', 400)],
+    ]);
+    expect(s.validation.status).toBe('failed');
+  });
+});

@@ -99,6 +99,11 @@ function rangeIn(text: string): Period | null {
   return null;
 }
 
+/** Whether the text holds a statement-period style range (two full dates joined by a separator). */
+export function holdsRange(text: string): boolean {
+  return rangeIn(text) !== null;
+}
+
 /** A range that is the whole line: nothing else but its two dates, a separator and punctuation. */
 function aloneRange(text: string): Period | null {
   const range = rangeIn(text);

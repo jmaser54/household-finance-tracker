@@ -170,6 +170,18 @@ describe('layouts found on real statements (synthetic copies)', () => {
     expect(s.validation.status).toBe('verified');
   });
 
+  it('a three-page statement with dated footers, repeated period headers and end-of-statement summaries', async () => {
+    const s = await parsed('checking-multipage-summaries-2026-03.pdf');
+    expect(s).toMatchObject({ accountKind: 'checking', last4: '4821', openingBalanceCents: 205_000, closingBalanceCents: 509_835 });
+    expect(s.transactions).toHaveLength(10);
+    expect(s.unreadLines).toEqual([]);
+    const counts: Record<string, number> = {};
+    for (const a of s.setAside) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
+    expect(counts).toEqual({ page_header_or_footer: 5, balance_summary: 1, interest_or_fee_summary: 1, zero_amounts: 2, daily_balance: 5 });
+    expect(s.validation.checks).toContainEqual({ label: 'Every daily balance printed agrees with the transactions', passed: true });
+    expect(s.validation.status).toBe('verified');
+  });
+
   it('a card with its period as closing date plus days, totals in headings and an undated interest line', async () => {
     const s = await parsed('card-closing-date-totals-2026-04.pdf');
     expect(s).toMatchObject({ accountKind: 'credit_card', last4: '9046', periodStart: '2026-03-16', periodEnd: '2026-04-13', periodSource: 'closing_date_and_cycle_days' });
@@ -243,6 +255,7 @@ describe('masked diagnostics never reveal values', () => {
     ['combined-checking-savings-2026-03.pdf', ['4821', '7310', '5313', '5512', '2,500.00', '7,296.34', 'PAYROLL', 'GROCER', 'Everyday', 'Example', '03/31/2026']],
     ['card-closing-date-totals-2026-04.pdf', ['9046', '1,312.50', '1,250.00', '14.27', '21.49', 'GROCER', 'Rewards', '04/13/2026', '29']],
     ['combined-summaries-2026-03.pdf', ['4821', '7310', '3,200.00', '8,464.83', '6,400.00', 'Jordan', 'Casey', 'Hometown', 'GROCER', 'March', '2026']],
+    ['checking-multipage-summaries-2026-03.pdf', ['4821', '2,050.00', '5,098.35', '3,125.14', '0.42', '0.01', 'GROCER', 'Valley', '03/31/2026']],
     ['card-bare-headings-2026-04.pdf', ['2208', '400.00', 'AUTOPAY', 'BOOKSTORE', 'Travel', 'March', 'April', '2026']],
   ])('%s: the facts about how it was read contain no values', async (name, secrets) => {
     const outcome = await read(name);

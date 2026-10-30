@@ -36,6 +36,34 @@ export type UnreadReason =
   | 'date_not_in_period'
   | 'outside_any_account';
 
+/**
+ * Lines with a date or an amount that are recognised as NOT transactions, and
+ * so set aside rather than counted. Each is listed (masked) in the diagnostics.
+ * If one were really a transaction, the balance check would fail.
+ */
+export type SetAsideKind =
+  /** A page footer or header: "Page 2 of 3", or the period repeated at the top of a page. */
+  | 'page_header_or_footer'
+  /** "Average daily balance", "Minimum balance" and similar. */
+  | 'balance_summary'
+  /** "Interest earned this period", "Interest charged this period", "Fees paid this year", "Annual percentage yield". */
+  | 'interest_or_fee_summary'
+  /** Interest-rate tables (a percentage or APR) and year-to-date totals. */
+  | 'rate_or_year_to_date'
+  /** A line whose amounts are all zero, e.g. "Overdraft fees $0.00 $0.00". */
+  | 'zero_amounts'
+  /** A daily balance table: dates and balances only. Checked against the transactions. */
+  | 'daily_balance';
+
+/** Where an unread line sits, for the masked diagnostics. Fixed codes only. */
+export interface UnreadContext {
+  /** The column each amount on the line falls under. */
+  amountColumns: ('debit' | 'credit' | 'amount' | 'balance' | 'none')[];
+  /** Relative to the account's transaction rows. */
+  position: 'before_rows' | 'between_rows' | 'after_rows';
+  section: 'credit' | 'debit' | 'none';
+}
+
 export interface ParsedTransaction {
   /** Index of the source line in PdfText.lines, for diagnostics. */
   line: number;
@@ -63,6 +91,10 @@ export interface ParsedStatement {
   unreadLines: number[];
   /** Why each of `unreadLines` could not be read, in the same order. */
   unreadReasons: UnreadReason[];
+  /** Where each of `unreadLines` sits, in the same order (absent for lines outside any account). */
+  unreadContext: (UnreadContext | null)[];
+  /** Lines recognised as not transactions; see SetAsideKind. */
+  setAside: { line: number; kind: SetAsideKind }[];
   validation: StatementValidation;
   /** How the period was found. */
   periodSource: PeriodSource;

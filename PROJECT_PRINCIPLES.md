@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.9: direction of money read from more printed evidence)
+**Last reviewed:** 2026-10-30 (v2.10: non-transaction lines recognised and listed; daily balances checked)
 
 ## How to use this document
 
@@ -410,6 +410,7 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - a period printed alone on its line with no label ("March 1, 2026 through March 31, 2026", masked `MONTH NUMBER NUMBER through MONTH NUMBER NUMBER`), repeated on each page; disagreeing unlabelled ranges give no period;
   - combined statements with "CHECKING SUMMARY" / "SAVINGS SUMMARY" headings and every heading variant traced, including no printed number; two accounts that can't be split, or an all-accounts balance line, fail;
   - "verified" only when the balances were reconciled: no balances, one balance, or an unknown sign is *unverified*; an unread line is at most *partially verified*;
+  - lines that aren't transactions (page footers and headers, balance, interest and fee summaries, zero fee tables, daily balance tables) set aside by specific patterns and listed; daily balances checked against the transactions, failing on any difference; lines that could be transactions stay unread; a transaction taken for a summary fails the balances;
   - direction of money from: a section heading above its column header; combined or decorated column labels; a minus printed apart from its amount; a daily-only running balance when exactly one choice fits (several → unknown, none → failed); a minus-marked Amount column on a bank account (never on a card, never when the column prints no minus).
 - In the app's oldest engine (CI): with the built-ins Monterey's WebKit lacks removed from the page and the worker, statements still import (Chromium); every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
 - When a file can't be read, "Technical details (no statement contents)" names the step that failed, the error type with digits and quoted text removed, structural facts about the file and the engine's features. A test checks it contains none of the synthetic statements' values.
@@ -474,6 +475,12 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.10.** Two statements reconciled but had 2 lines each that "couldn't be read". The balances adding up showed they weren't transactions. Reproduced on synthetic layouts. Security requirements, §10 rules and reconciliation are unchanged.
+  - Page footers and headers, balance and interest/fee summaries, zero fee tables and daily balance tables are recognised by specific patterns and set aside. Each is listed in the diagnostics; none is silently dropped.
+  - Printed daily balances are now a reconciliation check.
+  - Fixed: a daily balance line with several days was read as a transaction, and an interest summary could be added as an undated charge.
+  - Diagnostics show, for each unread line, the column its amounts fall under, its position relative to the rows and its section.
 
 - **2026-10-30, v2.9.** One statement's rows were still "Can't use". Reproduced on synthetic layouts where the direction is printed but wasn't read. Security requirements, §10 rules and reconciliation are unchanged; nothing is guessed.
   - Section headings printed above their own column headers.

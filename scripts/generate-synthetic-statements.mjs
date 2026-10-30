@@ -627,6 +627,102 @@ function savingsDailyBalance() {
   });
 }
 
+// ---- Layout 11: three pages with dated footers and end-of-statement summaries --
+// The period repeated atop each later page, "03/31/2026  Page N of 3" footers,
+// an average balance, an interest summary, a fee table of zeros, and a daily
+// ending balance table with two days per line.
+function checkingMultipageSummaries() {
+  return makePdf((p) => {
+    const opening = 205_000;
+    const rows = [
+      { date: '03/02', description: 'EXAMPLE GROCER', cents: -7_215 },
+      { date: '03/04', description: 'SAMPLE COFFEE CO', cents: -575 },
+      { date: '03/06', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 260_000 },
+      { date: '03/09', description: 'EXAMPLE UTILITY CO AUTOPAY', cents: -10_830 },
+      { date: '03/12', description: 'EXAMPLE PHARMACY', cents: -2_210 },
+      { date: '03/16', description: 'ONLINE TRANSFER TO SAVINGS', cents: -40_000 },
+      { date: '03/20', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 260_000 },
+      { date: '03/23', description: 'EXAMPLE HARDWARE', cents: -4_377 },
+      { date: '03/27', description: 'PAYMENT TO EXAMPLE CARD ENDING 5512', cents: -150_000 },
+      { date: '03/31', description: 'INTEREST PAID', cents: 42 },
+    ];
+    let balance = opening;
+    const withBalance = rows.map((r) => ({ ...r, balance: (balance += r.cents) }));
+    const ending = balance;
+    const footer = (n) => {
+      p.text(50, 40, '03/31/2026');
+      p.text(500, 40, `Page ${n} of 3`);
+    };
+    const header = (y) => {
+      p.text(50, y, 'Date', { isBold: true });
+      p.text(95, y, 'Description', { isBold: true });
+      p.text(400, y, 'Withdrawals', { isBold: true, align: 'right' });
+      p.text(480, y, 'Deposits', { isBold: true, align: 'right' });
+      p.text(560, y, 'Balance', { isBold: true, align: 'right' });
+      return y - 16;
+    };
+    const rowsOut = (y, list) => {
+      for (const row of list) {
+        p.text(50, y, row.date);
+        p.text(95, y, row.description);
+        p.text(row.cents < 0 ? 400 : 480, y, money(row.cents), { align: 'right' });
+        p.text(560, y, money(row.balance), { align: 'right' });
+        y -= 14;
+      }
+      return y;
+    };
+
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Valley Bank', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Value Checking   Account number XXXXXX4821');
+    p.text(50, (y -= 14), 'Statement Period 03/01/2026 - 03/31/2026');
+    p.text(50, (y -= 22), 'Beginning Balance');
+    p.text(560, y, `$${money(opening)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'Ending Balance');
+    p.text(560, y, `$${money(ending)}`, { align: 'right' });
+    y = header(y - 26);
+    rowsOut(y, withBalance.slice(0, 5));
+    footer(1);
+
+    p.newPage();
+    y = 750;
+    p.text(50, y, '03/01/2026 - 03/31/2026');
+    y = header(y - 22);
+    rowsOut(y, withBalance.slice(5));
+    footer(2);
+
+    p.newPage();
+    y = 750;
+    p.text(50, y, '03/01/2026 - 03/31/2026');
+    p.text(50, (y -= 26), 'Account Summary', { isBold: true });
+    p.text(50, (y -= 14), 'Average daily balance');
+    p.text(560, y, `$${money(312_514)}`, { align: 'right' });
+    p.text(50, (y -= 14), 'Interest earned this period');
+    p.text(560, y, '$0.42', { align: 'right' });
+    p.text(50, (y -= 14), 'Annual percentage yield earned 0.01%');
+    p.text(50, (y -= 22), 'Overdraft and Returned Item Fees', { isBold: true });
+    p.text(400, y, 'This Period', { align: 'right' });
+    p.text(480, y, 'Year to Date', { align: 'right' });
+    p.text(50, (y -= 14), 'Overdraft fees');
+    p.text(400, y, '$0.00', { align: 'right' });
+    p.text(480, y, '$0.00', { align: 'right' });
+    p.text(50, (y -= 14), 'Returned item fees');
+    p.text(400, y, '$0.00', { align: 'right' });
+    p.text(480, y, '$0.00', { align: 'right' });
+    p.text(50, (y -= 22), 'DAILY ENDING BALANCE', { isBold: true });
+    for (let i = 0; i < withBalance.length; i += 2) {
+      y -= 14;
+      [withBalance[i], withBalance[i + 1]].forEach((row, k) => {
+        if (!row) return;
+        p.text(50 + k * 260, y, row.date);
+        p.text(200 + k * 260, y, money(row.balance), { align: 'right' });
+      });
+    }
+    footer(3);
+  });
+}
+
 // ---- Not statements ---------------------------------------------------------
 function scanned() {
   return makePdf((p) => {
@@ -689,6 +785,7 @@ const FIXTURES = {
   'combined-summaries-2026-03.pdf': combinedSummaries,
   'checking-sections-above-headers-2026-03.pdf': checkingSectionsAboveHeaders,
   'savings-daily-balance-2026-03.pdf': savingsDailyBalance,
+  'checking-multipage-summaries-2026-03.pdf': checkingMultipageSummaries,
   'scanned-image-only.pdf': scanned,
   'not-a-statement-letter.pdf': letter,
 };

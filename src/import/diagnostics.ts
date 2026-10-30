@@ -75,8 +75,21 @@ function statementFacts(text: PdfText, statement: ParsedStatement, number: numbe
   ];
   s.unreadLines.forEach((line, i) => {
     const l = text.lines[line];
-    if (l) out.push(`  unread [${s.unreadReasons[i] ?? 'unknown'}] p${l.page}  ${maskLine(l)}`);
+    const c = s.unreadContext[i];
+    const where = c
+      ? `; amounts in: ${c.amountColumns.join(', ') || 'none'}; ${c.position.replace('_', ' ')}; section: ${c.section}`
+      : '';
+    if (l) out.push(`  unread [${s.unreadReasons[i] ?? 'unknown'}${where}] p${l.page}  ${maskLine(l)}`);
   });
+  if (s.setAside.length) {
+    const counts = new Map<string, number>();
+    for (const a of s.setAside) counts.set(a.kind, (counts.get(a.kind) ?? 0) + 1);
+    out.push(`  set aside as not transactions: ${[...counts].map(([kind, n]) => `${kind.replace(/_/g, ' ')} ${n}`).join(', ')}`);
+    for (const a of s.setAside.slice(0, 20)) {
+      const l = text.lines[a.line];
+      if (l) out.push(`    [${a.kind.replace(/_/g, ' ')}] p${l.page}  ${maskLine(l)}`);
+    }
+  }
   return out;
 }
 

@@ -19,8 +19,18 @@ import { MoneyParseError, parseAmountToCents, sumCents, type Cents } from '../..
 import type { AccountKind, IsoDate, StatementValidation } from '../../domain/types';
 import type { PdfText, TextLine, TextPiece } from '../pdfText';
 import { findAccountKind, findLast4, splitAccounts, type AccountSection } from './accounts';
-import { findPeriod, parseFullDate, type Period, type PeriodSource } from './period';
-import type { ParsedStatement, ParsedTransaction, ParseOutcome, RowFlag, SignSource, StatementParser, UnreadReason } from './types';
+import { findPeriod, holdsRange, parseFullDate, type Period, type PeriodSource } from './period';
+import type {
+  ParsedStatement,
+  ParsedTransaction,
+  ParseOutcome,
+  RowFlag,
+  SetAsideKind,
+  SignSource,
+  StatementParser,
+  UnreadContext,
+  UnreadReason,
+} from './types';
 
 const NUMERIC_DATE = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -75,6 +85,16 @@ const CARD_DEBIT_HEADING =
 
 /** Undated lines that are charges (interest, fees): added on the closing date and flagged. */
 const UNDATED_CHARGE = /\b(interest|fees?|finance charge|late charge|annual fee)\b/i;
+/** …but not a summary of interest or fees ("Interest earned this period", "Fees this year"). */
+const NOT_A_CHARGE = /\b(earned|paid|yield|rate|this (period|year|cycle|statement)|to date|summary|total)\b/i;
+
+// Lines recognised as not transactions (SetAsideKind). Each pattern is specific;
+// anything else with an amount is still reported unread.
+const PAGE_LINE = /\bpage \d+( of \d+)?\b/i;
+const BALANCE_SUMMARY = /\b(average|avg|minimum|min|maximum|lowest|highest|ledger|collected|available|daily)\b.*\bbalance\b/i;
+const INTEREST_SUMMARY =
+  /\b(interest|fees?) (earned|paid|credited|charged)\b.*\b(this|period|year|cycle|to date|ytd)\b|\bannual percentage yield\b|\bAPY\b/i;
+const DAILY_BALANCE_HEADING = /\b(daily (ending |ledger |closing )?balances?|balance summary|daily balance summary)\b/i;
 /** Undated lines that are summaries, not transactions: interest-rate tables and year-to-date totals. */
 const SUMMARY_LINE = /\d%|\bAPR\b|\b(19|20)\d{2}\b|year[- ]to[- ]date|\bYTD\b/i;
 
@@ -182,6 +202,19 @@ function trailingAmounts(pieces: TextPiece[]): { amounts: TextPiece[]; rest: Tex
   return { amounts, rest };
 }
 
+/** A line made only of date and amount pairs ("03/02 900.00 03/09 1,240.00"), as in a daily balance table. */
+function datePairs(text: string): { token: string; cents: Cents }[] | null {
+  const tokens = text.trim().split(/\s+/);
+  if (tokens.length < 2 || tokens.length % 2 !== 0) return null;
+  const pairs: { token: string; cents: Cents }[] = [];
+  for (let i = 0; i < tokens.length; i += 2) {
+    const amount = isDateToken(tokens[i]!) && isAmount(tokens[i + 1]!) ? readAmount(tokens[i + 1]!) : null;
+    if (!amount) return null;
+    pairs.push({ token: tokens[i]!, cents: signed(amount) });
+  }
+  return pairs;
+}
+
 function findHeader(line: TextLine): Column[] | null {
   if (!line.pieces.some((p) => /\bdate\b/i.test(p.text))) return null;
   const columns: Column[] = [];
@@ -281,14 +314,33 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
   const unreadLines: number[] = [];
   const unreadReasons: UnreadReason[] = [];
   const signSources: Partial<Record<SignSource, number>> = {};
-  const unread = (lineIndex: number, reason: UnreadReason) => {
+  const unreadContext: (UnreadContext & { at: number })[] = [];
+  const setAside: { line: number; kind: SetAsideKind }[] = [];
+  /** Daily balances printed in a balance table, checked against the transactions after reading. */
+  const dailyBalances: { token: string; cents: Cents }[] = [];
+  let inDailyBalances = false;
+  const putAside = (lineIndex: number, kind: SetAsideKind) => setAside.push({ line: section.lines[lineIndex]!, kind });
+  const amountsAllInBalanceColumn = (amounts: TextPiece[]) =>
+    columns.length > 0 && amounts.length > 0 && amounts.every((piece) => columnFor(piece, columns)?.type === 'balance');
+  const unread = (lineIndex: number, reason: UnreadReason, amounts: TextPiece[] = []) => {
     unreadLines.push(section.lines[lineIndex]!);
     unreadReasons.push(reason);
+    unreadContext.push({
+      at: lineIndex,
+      amountColumns: amounts.map((piece) => (columns.length ? (columnFor(piece, columns)?.type ?? 'none') : 'none')),
+      position: 'before_rows',
+      section: section_ ?? 'none',
+    });
   };
 
   lines.forEach((line, index) => {
     const header = findHeader(line);
+    const describes = line.pieces.some((p) => /description|transaction|details/i.test(p.text));
+    // "Date  Balance  Date  Balance" of a daily balance table doesn't replace the transaction columns;
+    // a header with a description column starts a transaction table again.
+    if (header && inDailyBalances && !describes) return;
     if (header) {
+      inDailyBalances = false;
       columns = header;
       inTable = true;
       // A section heading printed on the line just above the column header
@@ -303,11 +355,24 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
       return;
     }
     if (!inTable && transactions.length === 0 && !isDateToken(line.pieces[0]?.text.split(/\s+/)[0] ?? '')) return;
-    if (/^(total|subtotal)\b/i.test(line.text) || /^page \d+ (of \d+)?$/i.test(line.text)) return;
+    if (/^(total|subtotal)\b/i.test(line.text)) return;
 
     const { dates, rest: afterDates } = leadingDates(line.pieces);
     const { amounts, rest: middle } = trailingAmounts(afterDates);
     const description = middle.map((p) => p.text).join(' ').trim();
+
+    // Page footers and headers ("03/31/2026  Page 2 of 3", the period repeated atop a page).
+    if (amounts.length === 0 && (PAGE_LINE.test(line.text) || holdsRange(line.text))) {
+      if (dates.length > 0 || PAGE_LINE.test(line.text)) putAside(index, 'page_header_or_footer');
+      return;
+    }
+    // A daily balance table: only dates and balances ("03/02  900.00  03/09  1,240.00").
+    const pairs = datePairs(line.text);
+    if (pairs && (pairs.length > 1 || inDailyBalances || amountsAllInBalanceColumn(amounts))) {
+      dailyBalances.push(...pairs);
+      putAside(index, 'daily_balance');
+      return;
+    }
 
     // Balance lines inside the table ("Beginning balance", dated or not) are not transactions.
     if (OPENING_LABEL.test(description) || CLOSING_LABEL.test(description)) {
@@ -335,6 +400,7 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
           section_ = heading;
           sectionTotal = null;
         }
+        if (DAILY_BALANCE_HEADING.test(line.text)) inDailyBalances = true;
         return;
       }
       // A heading that prints its section's total, e.g. "Payments and Other Credits -1,234.56".
@@ -347,13 +413,15 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
         return;
       }
       if (!inTable) return;
-      if (SUMMARY_LINE.test(description)) return;
-      if (amounts.length === 1 && readAmount(amounts[0]!.text)?.absCents === 0) return; // e.g. "Fee waived 0.00"
-      if (amounts.length === 1 && description !== '' && UNDATED_CHARGE.test(description)) {
+      if (BALANCE_SUMMARY.test(description)) return putAside(index, 'balance_summary');
+      if (INTEREST_SUMMARY.test(description)) return putAside(index, 'interest_or_fee_summary');
+      if (SUMMARY_LINE.test(description)) return putAside(index, 'rate_or_year_to_date');
+      if (amounts.every((a) => readAmount(a.text)?.absCents === 0)) return putAside(index, 'zero_amounts'); // "Fee waived 0.00"
+      if (amounts.length === 1 && description !== '' && UNDATED_CHARGE.test(description) && !NOT_A_CHARGE.test(description)) {
         addRow(index, period.end, null, description, amounts, ['date_assigned']);
         return;
       }
-      unread(index, 'no_date');
+      unread(index, 'no_date', amounts);
       return;
     }
 
@@ -361,7 +429,9 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     const posted = parseRowDate(dates.length === 2 ? dates[1]! : dates[0]!, period);
     const transactionDate = dates.length === 2 ? parseRowDate(dates[0]!, period) : null;
     if (!posted || amounts.length === 0 || description === '') {
-      if (amounts.length > 0 || inTable) unread(index, !posted ? 'date_not_in_period' : amounts.length === 0 ? 'no_amount' : 'no_description');
+      if (amounts.length > 0 || inTable) {
+        unread(index, !posted ? 'date_not_in_period' : amounts.length === 0 ? 'no_amount' : 'no_description', amounts);
+      }
       return;
     }
     addRow(index, posted, transactionDate, description, amounts, []);
@@ -383,7 +453,7 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     }
     const printed = amountPiece ? readAmount(amountPiece.text) : null;
     if (!printed) {
-      unread(index, 'bad_amount');
+      unread(index, 'bad_amount', amounts);
       return;
     }
 
@@ -475,6 +545,24 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     }
   }
 
+  // Where each unread line sits relative to the rows, for the diagnostics.
+  const rowAt = transactions.map((t) => section.lines.indexOf(t.line));
+  for (const context of unreadContext) {
+    const before = rowAt.filter((r) => r < context.at).length;
+    context.position = before === 0 ? 'before_rows' : before === rowAt.length ? 'after_rows' : 'between_rows';
+  }
+
+  // Each printed daily balance must equal the opening balance plus every row up to that day.
+  let dailyBalancesAgree: boolean | null = null;
+  if (dailyBalances.length && openingBalanceCents !== undefined && !isCard && transactions.every((t) => t.amountCents !== null)) {
+    dailyBalancesAgree = dailyBalances.every(({ token, cents }) => {
+      const day = parseRowDate(token, period);
+      if (!day) return false;
+      const upToDay = sumCents(transactions.filter((t) => t.postedDate <= day).map((t) => t.amountCents!));
+      return openingBalanceCents! + upToDay === cents;
+    });
+  }
+
   const validation = validate(transactions, {
     openingBalanceCents,
     closingBalanceCents,
@@ -482,6 +570,8 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
     unreadLines,
     sectionTotals,
     oneAccount: balancesOfOneAccount(lines),
+    dailyBalancesAgree,
+    hasDailyBalances: dailyBalances.length > 0,
   });
   return {
     statement: {
@@ -494,6 +584,8 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
       transactions: transactions.map(({ printedBalance: _balance, ...rest }) => rest),
       unreadLines,
       unreadReasons,
+      unreadContext: unreadContext.map(({ at: _at, ...context }) => context),
+      setAside,
       validation,
       periodSource,
       signSources,
@@ -536,6 +628,7 @@ export const genericParser: StatementParser = {
     if (strays.length && read[0]) {
       read[0].statement.unreadLines.push(...strays);
       read[0].statement.unreadReasons.push(...strays.map((): UnreadReason => 'outside_any_account'));
+      read[0].statement.unreadContext.push(...strays.map(() => null));
       read[0].statement.validation = revalidate(read[0].statement);
       read[0].score = Math.min(read[0].score, 0.6);
     }
@@ -560,12 +653,14 @@ function revalidate(statement: ReadAccount['statement']): StatementValidation {
 const BALANCES_ADD_UP = 'Opening balance plus activity equals closing balance';
 const EVERY_ROW_READ = 'Every row was read';
 const ONE_ACCOUNT = "Only one account's balances on this statement";
+const DAILY_BALANCES = 'Every daily balance printed agrees with the transactions';
 /** A failure of any of these means the statement doesn't add up. */
 const RECONCILIATION_CHECKS = new Set([
   BALANCES_ADD_UP,
   'Every row agrees with the running balance',
   'Each section adds up to the total printed in its heading',
   ONE_ACCOUNT,
+  DAILY_BALANCES,
 ]);
 
 /**
@@ -614,6 +709,8 @@ function validate(
     unreadLines: number[];
     sectionTotals: SectionTotal[];
     oneAccount: boolean | null;
+    dailyBalancesAgree: boolean | null;
+    hasDailyBalances: boolean;
   },
 ): StatementValidation {
   const checks: StatementValidation['checks'] = [];
@@ -652,6 +749,7 @@ function validate(
     checks.push({ label: 'Each section adds up to the total printed in its heading', passed: totalsMatch });
   }
   checks.push({ label: ONE_ACCOUNT, passed: facts.oneAccount });
+  if (facts.hasDailyBalances) checks.push({ label: DAILY_BALANCES, passed: facts.dailyBalancesAgree });
   checks.push({ label: EVERY_ROW_READ, passed: facts.unreadLines.length === 0 && allKnown });
   return { status: statusOf(checks), checks };
 }
