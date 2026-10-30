@@ -1,15 +1,15 @@
-// CI only. Imports every SYNTHETIC statement in an older WebKit (Playwright
-// 1.44 bundles WebKit 17.4, close to Safari 17.6 on macOS Monterey) to check
-// the PDF reader works in the engine the household's Mac uses. Prints each
-// file's result and, for failures, the technical details (no contents).
-// PW144_DIR is a separate playwright@1.44.1 install, loaded by explicit path
-// (a bare require would find the project's newer Playwright first).
+// CI only. Imports every SYNTHETIC statement in an older WebKit to check the
+// PDF reader works in the engine the household's Mac uses (macOS Monterey;
+// its built-in WebKit, used by apps, is older than the Safari app's). Prints
+// each file's result and, for failures, the technical details (no contents).
+// PW_DIR is a separate install of the Playwright version EXPECT_PLAYWRIGHT,
+// loaded by explicit path (a bare require would find the project's newer
+// Playwright first). Selectors stick to APIs old Playwright versions have.
 const path = require('node:path');
-const { webkit, version } = (() => {
-  const pw = require(path.join(process.env.PW144_DIR, 'node_modules', 'playwright'));
-  return { webkit: pw.webkit, version: require(path.join(process.env.PW144_DIR, 'node_modules', 'playwright', 'package.json')).version };
-})();
-if (version !== '1.44.1') throw new Error(`expected Playwright 1.44.1, got ${version}`);
+const pwDir = path.join(process.env.PW_DIR, 'node_modules', 'playwright');
+const { webkit } = require(pwDir);
+const version = require(path.join(pwDir, 'package.json')).version;
+if (version !== process.env.EXPECT_PLAYWRIGHT) throw new Error(`expected Playwright ${process.env.EXPECT_PLAYWRIGHT}, got ${version}`);
 const { readdirSync } = require('node:fs');
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:4180/';
@@ -24,19 +24,22 @@ const statements = ['checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-202
   const errors = [];
   page.on('pageerror', (e) => errors.push(`${e.name}: ${e.message}`.slice(0, 200)));
   await page.goto(BASE);
-  console.log('Engine:', await page.evaluate(() => navigator.userAgent));
+  const userAgent = await page.evaluate(() => navigator.userAgent);
+  const engineVersion = /Version\/([\d.]+)/.exec(userAgent)?.[1] ?? 'unknown';
+  console.log(`Playwright ${version}; engine:`, userAgent);
   console.log('Features:', JSON.stringify(await page.evaluate(() => ({
     urlParse: typeof URL.parse === 'function',
     promiseTry: typeof Promise.try === 'function',
     streamAsyncIteration: typeof ReadableStream.prototype[Symbol.asyncIterator] === 'function',
     secureContext: isSecureContext,
     webCrypto: typeof crypto.subtle?.digest === 'function',
+    decompressionStream: typeof DecompressionStream === 'function',
   }))));
-  await page.getByLabel('Passphrase', { exact: true }).fill('synthetic test passphrase');
-  await page.getByLabel('Type it again').fill('synthetic test passphrase');
-  await page.getByRole('button', { name: 'Create household' }).click();
-  await page.getByText('Example with made-up numbers').waitFor();
-  await page.getByTestId('statement-input').setInputFiles(statements);
+  await page.fill('input[type=password] >> nth=0', 'synthetic test passphrase');
+  await page.fill('input[type=password] >> nth=1', 'synthetic test passphrase');
+  await page.click('button:has-text("Create household")');
+  await page.waitForSelector('text=Example with made-up numbers');
+  await page.setInputFiles('[data-testid=statement-input]', statements);
   // Poll with evaluate: Playwright 1.44's waitForFunction uses eval, which the app's CSP blocks.
   for (let i = 0; ; i++) {
     const done = await page.evaluate((n) => document.querySelectorAll('.import-card').length === n && !document.body.textContent.includes('Reading…'), statements.length);
@@ -60,10 +63,10 @@ const statements = ['checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-202
   if (errors.length) console.log('Page errors:', errors);
   await browser.close();
   if (cards.length !== statements.length || !ok) {
-    console.error(`Safari 17-era WebKit could not read ${cards.filter((c) => c.status !== 'parsed').length} of ${statements.length} statements.`);
+    console.error(`WebKit ${engineVersion} could not read ${cards.filter((c) => c.status !== 'parsed').length} of ${statements.length} statements.`);
     process.exit(1);
   }
-  console.log(`Safari 17-era WebKit read all ${statements.length} synthetic statements.`);
+  console.log(`WebKit ${engineVersion} read all ${statements.length} synthetic statements.`);
 })().catch((error) => {
   console.error(error);
   process.exit(1);

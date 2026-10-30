@@ -32,8 +32,9 @@ jobs:
       # No screenshots, traces or reports are ever uploaded (PROJECT_PRINCIPLES.md §3.4).
 
   safari17-webkit:
-    # The household Mac runs macOS Monterey, whose newest Safari is 17.6.
-    # Playwright 1.44 bundles WebKit 17.4, the closest automatable engine.
+    # The Safari APP on macOS Monterey can be 17.6; Playwright 1.44 bundles
+    # WebKit 17.4. (Apps like ours get Monterey's older built-in WebKit: see
+    # the webkit15 job.)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -54,7 +55,32 @@ jobs:
         run: |
           npx vite preview --host 127.0.0.1 --port 4180 --strictPort &
           for _ in $(seq 1 30); do curl -sf http://127.0.0.1:4180/ >/dev/null && break; sleep 1; done
-          PW144_DIR="$RUNNER_TEMP/pw144" node tests/compat/safari17-import.cjs
+          PW_DIR="$RUNNER_TEMP/pw144" EXPECT_PLAYWRIGHT=1.44.1 node tests/compat/webkit-import.cjs
+
+  webkit15:
+    # The app's window uses macOS's built-in WebKit, not the Safari app's.
+    # On the household's Monterey Mac that engine lacks DecompressionStream
+    # (Safari 16.4), so it is older than 16.4. Playwright 1.22's official
+    # image bundles WebKit 15.4, the closest automatable engine.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Import every synthetic statement in WebKit 15.4
+        run: |
+          npx vite preview --host 127.0.0.1 --port 4180 --strictPort &
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:4180/ >/dev/null && break; sleep 1; done
+          docker run --rm --network host -v "$PWD:/w:ro" -w /w \
+            -e PW_DIR=/tmp/pw -e EXPECT_PLAYWRIGHT=1.22.0 \
+            mcr.microsoft.com/playwright:v1.22.0-focal \
+            bash -c 'npm install --prefix /tmp/pw --no-save --ignore-scripts --silent playwright@1.22.0 && node tests/compat/webkit-import.cjs'
 
   macos-app:
     runs-on: macos-15
