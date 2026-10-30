@@ -182,6 +182,19 @@ describe('layouts found on real statements (synthetic copies)', () => {
     expect(s.validation.status).toBe('verified');
   });
 
+  it('a statement that reconciles with two ambiguous lines is reconciled with lines excluded, not verified', async () => {
+    const s = await parsed('checking-ambiguous-lines-2026-03.pdf');
+    expect(rows(s)).toEqual([
+      ['2026-03-03', 'EXAMPLE GROCER', -6_120],
+      ['2026-03-13', 'PAYROLL EXAMPLE EMPLOYER INC', 240_000],
+      ['2026-03-27', 'CHECK 1042', -30_000],
+      ['2026-03-31', 'MONTHLY SERVICE FEE', -1_200],
+    ]);
+    expect(s.validation.checks).toContainEqual({ label: 'Opening balance plus activity equals closing balance', passed: true });
+    expect(s.validation.status).toBe('partially_verified');
+    expect(s.excludedLines).toEqual(['1042 03/27 300.00', 'Monthly service charge 12.00']);
+  });
+
   it('a card with its period as closing date plus days, totals in headings and an undated interest line', async () => {
     const s = await parsed('card-closing-date-totals-2026-04.pdf');
     expect(s).toMatchObject({ accountKind: 'credit_card', last4: '9046', periodStart: '2026-03-16', periodEnd: '2026-04-13', periodSource: 'closing_date_and_cycle_days' });
@@ -256,6 +269,7 @@ describe('masked diagnostics never reveal values', () => {
     ['card-closing-date-totals-2026-04.pdf', ['9046', '1,312.50', '1,250.00', '14.27', '21.49', 'GROCER', 'Rewards', '04/13/2026', '29']],
     ['combined-summaries-2026-03.pdf', ['4821', '7310', '3,200.00', '8,464.83', '6,400.00', 'Jordan', 'Casey', 'Hometown', 'GROCER', 'March', '2026']],
     ['checking-multipage-summaries-2026-03.pdf', ['4821', '2,050.00', '5,098.35', '3,125.14', '0.42', '0.01', 'GROCER', 'Valley', '03/31/2026']],
+    ['checking-ambiguous-lines-2026-03.pdf', ['1042', '300.00', '12.00', 'Monthly', 'service charge', 'Prairie', '4821']],
     ['card-bare-headings-2026-04.pdf', ['2208', '400.00', 'AUTOPAY', 'BOOKSTORE', 'Travel', 'March', 'April', '2026']],
   ])('%s: the facts about how it was read contain no values', async (name, secrets) => {
     const outcome = await read(name);

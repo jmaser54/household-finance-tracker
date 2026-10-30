@@ -136,7 +136,8 @@ export interface Transaction {
 /**
  * PROJECT_PRINCIPLES.md §12. "verified": the opening balance plus the
  * activity read equals the closing balance and every row was read.
- * "partially_verified": they add up, but a line could not be read.
+ * "partially_verified": they add up, but a line could not be read and was
+ * left out ("reconciled with lines excluded"); it can be imported, with a warning.
  * "unverified": that comparison could not be made. "failed": a check failed.
  */
 export type ValidationStatus = 'verified' | 'partially_verified' | 'unverified' | 'failed';
@@ -161,6 +162,11 @@ export interface Statement {
    * account section of the file this statement is, counting from 0.
    */
   fileSection?: number;
+  /**
+   * Lines on the statement that looked like transactions but couldn't be read
+   * reliably and were left out (status "partially_verified"). Count only.
+   */
+  excludedLineCount?: number;
   parserId: string;
   parserVersion: number;
   transactionCount: number;

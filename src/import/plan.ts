@@ -206,6 +206,7 @@ export function applyImport(
       ...(parsed.closingBalanceCents !== undefined ? { closingBalanceCents: parsed.closingBalanceCents } : {}),
       fileSha256: draft.input.sha256,
       ...(parsed.section ? { fileSection: parsed.section.index } : {}),
+      ...(parsed.unreadLines.length ? { excludedLineCount: parsed.unreadLines.length } : {}),
       parserId: parsed.parserId,
       parserVersion: parsed.parserVersion,
       transactionCount: parsed.transactions.length,

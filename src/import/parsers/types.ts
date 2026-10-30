@@ -53,7 +53,13 @@ export type SetAsideKind =
   /** A line whose amounts are all zero, e.g. "Overdraft fees $0.00 $0.00". */
   | 'zero_amounts'
   /** A daily balance table: dates and balances only. Checked against the transactions. */
-  | 'daily_balance';
+  | 'daily_balance'
+  /** A section summary with an item count: "Deposits and other credits 3 items 5,700.00". */
+  | 'section_summary'
+  /** Card rewards: "Cash back earned this period", "Rewards balance", points, miles. */
+  | 'rewards_summary'
+  /** Explanatory text ending in an amount: the minimum-payment warning, "a late fee of up to $41.00". */
+  | 'explanatory_text';
 
 /** Where an unread line sits, for the masked diagnostics. Fixed codes only. */
 export interface UnreadContext {
@@ -95,6 +101,12 @@ export interface ParsedStatement {
   unreadContext: (UnreadContext | null)[];
   /** Lines recognised as not transactions; see SetAsideKind. */
   setAside: { line: number; kind: SetAsideKind }[];
+  /**
+   * The text of each unread line, exactly as printed, in the order of
+   * `unreadLines`. Shown on the review screen on this Mac only so the person
+   * can see what was left out; never stored, never in the diagnostics.
+   */
+  excludedLines: string[];
   validation: StatementValidation;
   /** How the period was found. */
   periodSource: PeriodSource;

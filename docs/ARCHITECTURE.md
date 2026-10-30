@@ -260,6 +260,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
      - interest and fee summaries ("Interest earned this period", "Fees charged this year", "Annual percentage yield");
      - interest-rate tables (a percentage or APR) and year-to-date totals;
      - lines whose amounts are all zero ("Overdraft fees $0.00 $0.00");
+     - section summaries with item counts ("Deposits and other credits 3 items"), card rewards lines (cash back, points, miles), the minimum-payment warning table and explanatory sentences ending in an amount;
      - daily balance tables (only dates and balances). **These are checked:** each printed daily balance must equal the opening balance plus every row up to that day, or the statement fails.
      - Anything else with an amount and no date (e.g. "Check 1042 03/27 300.00", an undated "Monthly service charge") stays *unread*: it could be a transaction. A transaction wrongly set aside would make the balances disagree, so the statement would fail rather than verify.
    - **Validation:**
@@ -268,7 +269,8 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
      - each section heading that prints a total must equal the rows read under it (net or gross), which catches a row missed, counted twice or placed in the wrong section even when the balances happen to agree;
      - posted dates must fall inside the period;
      - lines that look like transactions but can't be read are counted and shown, never dropped silently;
-     - **status:** *verified* only if opening plus activity equals closing and every row was read; *partially verified* if they add up but a line wasn't read; *unverified* if that comparison couldn't be made (the screen says why); *failed* if any check failed (PROJECT_PRINCIPLES §12).
+     - **status:** *verified* only if opening plus activity equals closing and every row was read; *partially verified* ("reconciled with lines excluded") if they add up but a line couldn't be read reliably; *unverified* if that comparison couldn't be made (the screen says why); *failed* if any check failed (PROJECT_PRINCIPLES §12).
+     - **Stopping point (2026-10-30):** a statement whose rows were extracted and whose balances reconcile can be imported even if a few ambiguous lines remain. It is recorded as *partially verified* with `excludedLineCount`, never as verified. The review screen shows a warning and lists each excluded line exactly as printed (on this Mac only; the masked diagnostics still show no values). Nothing in those lines is guessed or added; the person can add a missing transaction by hand. Statements that *fail* stay blocked.
 5. **Review** (`plan.ts`, `src/ui/Import.tsx`):
    - **Accounts:** each statement is matched to an existing account by type and last four digits, or proposed as a new, nameable account. Several months of a new account share one account.
    - **Duplicates and overlaps**, via `src/domain/dedupe.ts`: the same file again is "already added". Lines in an already-imported period are matched as a multiset, so genuine identical purchases survive. Near-matches are marked "Check this".

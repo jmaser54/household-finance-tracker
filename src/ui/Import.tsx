@@ -372,10 +372,13 @@ function StatementCard({
         <>
           {status === 'verified' && <p class="form-success">✓ Every line was read and the balances match the statement.</p>}
           {status === 'partially_verified' && (
-            <p class="hint">
-              The transactions add up to the statement's balances, but not every line could be read, so this statement
-              isn't fully verified.
-            </p>
+            <div class="warning" data-status-note="reconciled-with-exclusions">
+              <p>
+                <strong>Balances reconcile, with {s.unreadLines.length} {s.unreadLines.length === 1 ? 'line' : 'lines'} left out.</strong>{' '}
+                The transactions below add up to the statement's opening and closing balances, so it can be added. It
+                will be recorded as <em>reconciled with lines excluded</em>, not fully verified.
+              </p>
+            </div>
           )}
           {status === 'unverified' && (
             <p class="hint">
@@ -400,10 +403,20 @@ function StatementCard({
           )}
           {overlaps > 0 && <p class="hint">This statement overlaps one already added. Lines already in your records are skipped.</p>}
           {s.unreadLines.length > 0 && (
-            <p class="form-error">
-              {s.unreadLines.length} {s.unreadLines.length === 1 ? 'line looked' : 'lines looked'} like a transaction but
-              couldn't be read, so {s.unreadLines.length === 1 ? 'it is' : 'they are'} not listed.
-            </p>
+            <div class="excluded-lines" data-excluded-lines={s.unreadLines.length}>
+              <p class="form-error">
+                {s.unreadLines.length} {s.unreadLines.length === 1 ? 'line looked' : 'lines looked'} like a transaction but
+                couldn't be read reliably, so {s.unreadLines.length === 1 ? 'it is' : 'they are'} not added. No amount or
+                direction is guessed. If one is a transaction, you can add it by hand later.
+              </p>
+              <ul>
+                {s.excludedLines.map((text, i) => (
+                  <li key={i}>
+                    <code>{text}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </>
       )}

@@ -94,6 +94,13 @@ const PAGE_LINE = /\bpage \d+( of \d+)?\b/i;
 const BALANCE_SUMMARY = /\b(average|avg|minimum|min|maximum|lowest|highest|ledger|collected|available|daily)\b.*\bbalance\b/i;
 const INTEREST_SUMMARY =
   /\b(interest|fees?) (earned|paid|credited|charged)\b.*\b(this|period|year|cycle|to date|ytd)\b|\bannual percentage yield\b|\bAPY\b/i;
+const SECTION_SUMMARY =
+  /\b(deposits|withdrawals|credits|debits|checks|payments|purchases|additions|subtractions|transactions)\b.*\b\d+\s+(items?|transactions?)\b/i;
+const REWARDS_SUMMARY = /\b(rewards?|points|cash ?back|miles)\b/i;
+/** The minimum-payment warning table on card statements, and sentences addressed to the reader. */
+const DISCLOSURE = /\bonly the minimum payment\b|\bpay(ing)? off\b|\bestimated total\b|\b\d+\s+(years?|months?)\b/i;
+const SENTENCE_WORDS = /\b(you|your|we|our|if|may|will|please)\b/i;
+const isSentence = (text: string) => text.split(/\s+/).length >= 7 && SENTENCE_WORDS.test(text);
 const DAILY_BALANCE_HEADING = /\b(daily (ending |ledger |closing )?balances?|balance summary|daily balance summary)\b/i;
 /** Undated lines that are summaries, not transactions: interest-rate tables and year-to-date totals. */
 const SUMMARY_LINE = /\d%|\bAPR\b|\b(19|20)\d{2}\b|year[- ]to[- ]date|\bYTD\b/i;
@@ -415,6 +422,9 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
       if (!inTable) return;
       if (BALANCE_SUMMARY.test(description)) return putAside(index, 'balance_summary');
       if (INTEREST_SUMMARY.test(description)) return putAside(index, 'interest_or_fee_summary');
+      if (SECTION_SUMMARY.test(description)) return putAside(index, 'section_summary');
+      if (REWARDS_SUMMARY.test(description)) return putAside(index, 'rewards_summary');
+      if (DISCLOSURE.test(description) || isSentence(description)) return putAside(index, 'explanatory_text');
       if (SUMMARY_LINE.test(description)) return putAside(index, 'rate_or_year_to_date');
       if (amounts.every((a) => readAmount(a.text)?.absCents === 0)) return putAside(index, 'zero_amounts'); // "Fee waived 0.00"
       if (amounts.length === 1 && description !== '' && UNDATED_CHARGE.test(description) && !NOT_A_CHARGE.test(description)) {
@@ -585,6 +595,7 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
       unreadLines,
       unreadReasons,
       unreadContext: unreadContext.map(({ at: _at, ...context }) => context),
+      excludedLines: unreadLines.map((i) => all[i]!.text),
       setAside,
       validation,
       periodSource,
@@ -629,6 +640,7 @@ export const genericParser: StatementParser = {
       read[0].statement.unreadLines.push(...strays);
       read[0].statement.unreadReasons.push(...strays.map((): UnreadReason => 'outside_any_account'));
       read[0].statement.unreadContext.push(...strays.map(() => null));
+      read[0].statement.excludedLines.push(...strays.map((i) => lines[i]!.text));
       read[0].statement.validation = revalidate(read[0].statement);
       read[0].score = Math.min(read[0].score, 0.6);
     }

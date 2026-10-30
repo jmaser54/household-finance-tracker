@@ -18,7 +18,7 @@ const statements = [
   'checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-2026-03.pdf', 'card-2026-03.pdf', 'card-2025-12.pdf',
   'combined-checking-savings-2026-03.pdf', 'card-closing-date-totals-2026-04.pdf', 'card-bare-headings-2026-04.pdf',
   'checking-worded-period-2026-03.pdf', 'combined-summaries-2026-03.pdf',
-  'checking-sections-above-headers-2026-03.pdf', 'savings-daily-balance-2026-03.pdf', 'checking-multipage-summaries-2026-03.pdf',
+  'checking-sections-above-headers-2026-03.pdf', 'savings-daily-balance-2026-03.pdf', 'checking-multipage-summaries-2026-03.pdf', 'checking-ambiguous-lines-2026-03.pdf',
 ]
   .map((f) => `${dir}/${f}`)
   .concat(readdirSync(`${dir}/structure`).filter((f) => f.endsWith('.pdf') && !f.startsWith('requires-user')).map((f) => `${dir}/structure/${f}`));
@@ -64,7 +64,9 @@ const statements = [
   );
   let ok = true;
   for (const card of cards) {
-    const good = card.status === 'parsed' && card.validation === 'verified';
+    // Reconciles, with two ambiguous lines left out by design.
+    const expected = card.name.startsWith('checking-ambiguous-lines') ? 'partially_verified' : 'verified';
+    const good = card.status === 'parsed' && card.validation === expected;
     console.log(`${good ? 'OK  ' : 'FAIL'} ${card.name}: ${card.status} ${card.validation ?? ''}`);
     if (card.details) console.log(card.details.replace(/^/gm, '       '));
     if (!good) ok = false;

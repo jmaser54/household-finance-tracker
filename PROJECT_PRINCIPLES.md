@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.10: non-transaction lines recognised and listed; daily balances checked)
+**Last reviewed:** 2026-10-30 (v2.11: import stopping point; reconciled-with-exclusions status)
 
 ## How to use this document
 
@@ -281,6 +281,7 @@ These are the contract for every calculation. Each is covered by automated tests
 - Every dashboard total is traceable to its transactions.
 - Original descriptions are preserved alongside normalized merchants.
 - Statement validation results stay stored and visible.
+- **Import stopping point.** A statement is eligible to import when its rows were extracted and its balances reconcile, even if a few lines couldn't be read reliably. Those lines are never guessed: they are left out, listed on the review screen, counted on the statement record, and the statement is *partially verified* (shown as "reconciled with lines excluded"), never *verified*. Statements that fail a check are not eligible. Parser support is not expanded further unless a statement fails to reconcile.
 - **"Verified" means reconciled.** A statement is *verified* only when its opening balance plus the activity read equals its closing balance, every row was read, and no other check failed. If that comparison can't be made (no printed balances, or a row whose sign is unknown), it is *unverified*, and the app says so. If balances add up but a line couldn't be read, it is *partially verified*, never verified. Any failed check makes it *failed*.
 - Two accounts are never reconciled together. A statement whose balance lines belong to more than one account fails.
 
@@ -475,6 +476,11 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.11.** Practical stopping point for PDF import, at the household's request. Security requirements, §10 rules and reconciliation are unchanged.
+  - More non-transaction content recognised and listed: section summaries with item counts, card rewards lines, the minimum-payment warning, explanatory sentences.
+  - Genuinely ambiguous lines (e.g. a separate "Checks Paid" list, an undated fee summary) stay excluded.
+  - Statements that reconcile with excluded lines are importable as "reconciled with lines excluded" (*partially verified*). The review screen shows a visible warning listing those lines; the stored statement records how many.
 
 - **2026-10-30, v2.10.** Two statements reconciled but had 2 lines each that "couldn't be read". The balances adding up showed they weren't transactions. Reproduced on synthetic layouts. Security requirements, §10 rules and reconciliation are unchanged.
   - Page footers and headers, balance and interest/fee summaries, zero fee tables and daily balance tables are recognised by specific patterns and set aside. Each is listed in the diagnostics; none is silently dropped.

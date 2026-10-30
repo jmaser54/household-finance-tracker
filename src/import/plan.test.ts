@@ -10,7 +10,14 @@ import type { PdfJs } from './pdfText';
 import { applyImport, planStatements, suggestAccount, type StatementInput } from './plan';
 import { readStatement } from './readStatement';
 
-const files = ['checking-2026-03.pdf', 'savings-2026-03.pdf', 'card-2026-03.pdf', 'checking-2026-04.pdf', 'card-closing-date-totals-2026-04.pdf'] as const;
+const files = [
+  'checking-2026-03.pdf',
+  'savings-2026-03.pdf',
+  'card-2026-03.pdf',
+  'checking-2026-04.pdf',
+  'card-closing-date-totals-2026-04.pdf',
+  'checking-ambiguous-lines-2026-03.pdf',
+] as const;
 const inputs = new Map<string, StatementInput>();
 /** The accounts of the combined statement, in file order. */
 let combined: StatementInput[] = [];
@@ -215,5 +222,20 @@ describe('a combined statement and undated charges', () => {
     // The card payment and the return keep their meanings.
     expect(find(ledger, 'PAYMENT THANK YOU')[0]!.kind).toBe('card_payment');
     expect(find(ledger, 'OUTFITTERS RETURN')[0]!.kind).toBe('refund');
+  });
+});
+
+describe('a statement that reconciles with lines excluded', () => {
+  it('is imported with every extracted row, recorded with its status and how many lines were left out', () => {
+    const { ledger, added, statements } = importInto(emptyLedger(), ['checking-ambiguous-lines-2026-03.pdf']);
+    expect(statements).toBe(1);
+    expect(added).toBe(4);
+    expect(ledger.statements[0]).toMatchObject({ excludedLineCount: 2, validation: { status: 'partially_verified' } });
+  });
+
+  it('importing it again adds nothing (duplicate detection unchanged)', () => {
+    const first = importInto(emptyLedger(), ['checking-ambiguous-lines-2026-03.pdf']);
+    const again = importInto(first.ledger, ['checking-ambiguous-lines-2026-03.pdf']);
+    expect(again.added).toBe(0);
   });
 });

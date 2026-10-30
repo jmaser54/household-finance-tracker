@@ -137,3 +137,14 @@ test('a combined statement with an unlabelled period and summary headings is two
   await page.getByRole('button', { name: 'Add 8 transactions' }).click();
   await expect(page.getByText(/Added 8 transactions from 2 statements\./)).toBeVisible();
 });
+
+test('a statement that reconciles with lines left out can be added, with a visible warning and the lines shown', async ({ page }) => {
+  await createHousehold(page);
+  await choose(page, ['checking-ambiguous-lines-2026-03.pdf']);
+  await expect(page.locator('[data-validation="partially_verified"]')).toHaveCount(1);
+  await expect(page.getByText('Balances reconcile, with 2 lines left out.')).toBeVisible();
+  await expect(page.locator('[data-excluded-lines="2"] li')).toHaveText(['1042 03/27 300.00', 'Monthly service charge 12.00']);
+  await expect(page.getByText('✓ Every line was read and the balances match the statement.')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add 4 transactions' }).click();
+  await expect(page.getByText(/Added 4 transactions from 1 statement\./)).toBeVisible();
+});

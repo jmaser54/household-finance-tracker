@@ -715,6 +715,20 @@ describe('lines that are not transactions are recognised, listed and never count
     expect(s.validation.status).toBe('verified');
   });
 
+  it.each([
+    ['a section summary with an item count', [labelled('Deposits and other credits 3 items', '5,700.00')], 'section_summary'],
+    ['a cash back summary', [labelled('Cash back earned this period', '$5.21')], 'rewards_summary'],
+    ['a rewards balance', [labelled('Rewards balance', '$45.10')], 'rewards_summary'],
+    ['a minimum payment warning row', [[['Only the minimum payment', 40], ['14 years', 300], at('$7,845.10', 560)]], 'explanatory_text'],
+    ['an explanatory sentence ending in an amount', [labelled('If you are late, you may have to pay a late fee of up to', '$41.00')], 'explanatory_text'],
+  ] as [string, Piece[][], string][])('%s is recognised as not a transaction', (_name, extra, kind) => {
+    const s = statement(extra);
+    expect(s.unreadLines).toEqual([]);
+    expect(kinds(s)).toEqual([kind]);
+    expect(s.transactions).toHaveLength(2);
+    expect(s.validation.status).toBe('verified');
+  });
+
   it('lines that could be transactions stay unread, with where they sit', () => {
     const s = statement([[['Check 1042', 40], ['03/27', 120], at('300.00', 400)], labelled('Monthly service charge', '12.00')]);
     expect(s.unreadReasons).toEqual(['no_date', 'no_date']);
@@ -723,6 +737,14 @@ describe('lines that are not transactions are recognised, listed and never count
       { amountColumns: ['balance'], position: 'after_rows', section: 'none' },
     ]);
     expect(s.validation.status).toBe('partially_verified');
+    // The person sees exactly what was left out, on this Mac.
+    expect(s.excludedLines).toEqual(['Check 1042 03/27 300.00', 'Monthly service charge 12.00']);
+  });
+
+  it('a statement with excluded lines is never verified, and never imported as such', () => {
+    const s = statement([labelled('Monthly service charge', '12.00')]);
+    expect(s.validation.checks).toContainEqual({ label: 'Every row was read', passed: false });
+    expect(s.validation.status).not.toBe('verified');
   });
 
   it('a transaction wrongly taken for a summary would fail the balance check, not pass', () => {

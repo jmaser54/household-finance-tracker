@@ -723,6 +723,52 @@ function checkingMultipageSummaries() {
   });
 }
 
+// ---- Layout 12: reconciles, but two lines stay ambiguous ---------------------
+// A "Checks Paid" list that repeats a check (number first, no row date) and a
+// fee summary line repeating a fee already listed: either could be a
+// transaction, so both are left out and disclosed, never guessed.
+function checkingAmbiguousLines() {
+  return makePdf((p) => {
+    const opening = 150_000;
+    const rows = [
+      { date: '03/03', description: 'EXAMPLE GROCER', cents: -6_120 },
+      { date: '03/13', description: 'PAYROLL EXAMPLE EMPLOYER INC', cents: 240_000 },
+      { date: '03/27', description: 'CHECK 1042', cents: -30_000 },
+      { date: '03/31', description: 'MONTHLY SERVICE FEE', cents: -1_200 },
+    ];
+    let balance = opening;
+    p.newPage();
+    let y = 750;
+    p.text(50, y, 'Example Prairie Bank', { size: 14, isBold: true });
+    p.text(50, (y -= 18), 'Simple Checking   Account number XXXXXX4821');
+    p.text(50, (y -= 14), 'Statement Period 03/01/2026 - 03/31/2026');
+    p.text(50, (y -= 22), 'Beginning Balance');
+    p.text(560, y, money(opening), { align: 'right' });
+    p.text(50, (y -= 14), 'Ending Balance');
+    p.text(560, y, money(opening + rows.reduce((s, r) => s + r.cents, 0)), { align: 'right' });
+    y -= 26;
+    p.text(50, y, 'Date', { isBold: true });
+    p.text(95, y, 'Description', { isBold: true });
+    p.text(400, y, 'Withdrawals', { isBold: true, align: 'right' });
+    p.text(480, y, 'Deposits', { isBold: true, align: 'right' });
+    p.text(560, y, 'Balance', { isBold: true, align: 'right' });
+    for (const row of rows) {
+      balance += row.cents;
+      p.text(50, (y -= 14), row.date);
+      p.text(95, y, row.description);
+      p.text(row.cents < 0 ? 400 : 480, y, money(row.cents), { align: 'right' });
+      p.text(560, y, money(balance), { align: 'right' });
+    }
+    p.text(50, (y -= 26), 'Checks Paid', { isBold: true });
+    p.text(50, (y -= 14), '1042');
+    p.text(120, y, '03/27');
+    p.text(250, y, '300.00', { align: 'right' });
+    p.text(50, (y -= 22), 'Fee Summary', { isBold: true });
+    p.text(50, (y -= 14), 'Monthly service charge');
+    p.text(560, y, '12.00', { align: 'right' });
+  });
+}
+
 // ---- Not statements ---------------------------------------------------------
 function scanned() {
   return makePdf((p) => {
@@ -786,6 +832,7 @@ const FIXTURES = {
   'checking-sections-above-headers-2026-03.pdf': checkingSectionsAboveHeaders,
   'savings-daily-balance-2026-03.pdf': savingsDailyBalance,
   'checking-multipage-summaries-2026-03.pdf': checkingMultipageSummaries,
+  'checking-ambiguous-lines-2026-03.pdf': checkingAmbiguousLines,
   'scanned-image-only.pdf': scanned,
   'not-a-statement-letter.pdf': letter,
 };
