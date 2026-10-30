@@ -260,7 +260,7 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
      - interest and fee summaries ("Interest earned this period", "Fees charged this year", "Annual percentage yield");
      - interest-rate tables (a percentage or APR) and year-to-date totals;
      - lines whose amounts are all zero ("Overdraft fees $0.00 $0.00");
-     - section summaries with item counts ("Deposits and other credits 3 items"), card rewards lines (cash back, points, miles), the minimum-payment warning table and explanatory sentences ending in an amount;
+     - section summaries with item counts ("Deposits and other credits 3 items"), card rewards lines (cash back, points, miles), the minimum-payment warning table, explanatory sentences ending in an amount, and a card's payment information repeated in the body ("See Your Account New Balance: $…", "Minimum Payment Due: $…");
      - daily balance tables (only dates and balances). **These are checked:** each printed daily balance must equal the opening balance plus every row up to that day, or the statement fails.
      - Anything else with an amount and no date (e.g. "Check 1042 03/27 300.00", an undated "Monthly service charge") stays *unread*: it could be a transaction. A transaction wrongly set aside would make the balances disagree, so the statement would fail rather than verify.
    - **Validation:**

@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.11: import stopping point; reconciled-with-exclusions status)
+**Last reviewed:** 2026-10-30 (v2.12: card payment information is not a transaction)
 
 ## How to use this document
 
@@ -476,6 +476,8 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-30, v2.12.** The household identified the last two unread lines on two card statements as payment information ("See Your Account New Balance: $…", "Minimum Payment Due: $…"). Undated lines naming the new balance, minimum payment or payment due are now set aside as payment information and listed; dated rows and undated interest and fees are unaffected. Nothing else changed.
 
 - **2026-10-30, v2.11.** Practical stopping point for PDF import, at the household's request. Security requirements, §10 rules and reconciliation are unchanged.
   - More non-transaction content recognised and listed: section summaries with item counts, card rewards lines, the minimum-payment warning, explanatory sentences.

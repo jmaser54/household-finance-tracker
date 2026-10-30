@@ -761,3 +761,54 @@ describe('lines that are not transactions are recognised, listed and never count
     expect(s.validation.status).toBe('failed');
   });
 });
+
+describe("a card's payment information printed among the transactions", () => {
+  const card = (extra: Piece[][]) =>
+    one([...cardTop('500.00', '561.23'), CARD_HEADER, cardRow('02/22', 'EXAMPLE GROCER', '50.00'), ...extra]);
+  const kinds = (s: ParsedStatement) => s.setAside.map((a) => a.kind);
+
+  it.each([
+    ['See Your Account New Balance:', '$1,234.56'],
+    ['Minimum Payment Due:', '$35.00'],
+    ['MINIMUM PAYMENT DUE', '$25.00'],
+    ['Payment Due:', '$30.00'],
+  ])('"%s %s" is payment information, not a transaction', (label, amount) => {
+    const s = card([[[label, 160], at(amount, 560)], [['INTEREST CHARGE ON PURCHASES', 160], at('11.23', 560)]]);
+    expect(s.unreadLines).toEqual([]);
+    expect(kinds(s)).toEqual(['payment_summary']);
+    expect(s.transactions.map((t) => t.description)).toEqual(['EXAMPLE GROCER', 'INTEREST CHARGE ON PURCHASES']);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('"New Balance: $…" at the start of a line is read as the closing balance line it is, not unread', () => {
+    const s = card([[['New Balance:', 160], at('$561.23', 560)], [['INTEREST CHARGE ON PURCHASES', 160], at('11.23', 560)]]);
+    expect(s.unreadLines).toEqual([]);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it('dated payments, purchases, fees and undated interest are still transactions', () => {
+    const s = one([
+      ...cardTop('500.00', '264.00'),
+      CARD_HEADER,
+      cardRow('02/20', 'PAYMENT DUE THANK YOU', '-300.00'),
+      cardRow('02/22', 'EXAMPLE NEW BALANCE FITNESS', '50.00'),
+      cardRow('02/25', 'LATE FEE', '10.00'),
+      [['INTEREST CHARGE ON PURCHASES', 160], at('4.00', 560)],
+      [['Minimum Payment Due:', 160], at('$25.00', 560)],
+    ]);
+    expect(s.transactions.map((t) => [t.description, t.amountCents])).toEqual([
+      ['PAYMENT DUE THANK YOU', 30_000],
+      ['EXAMPLE NEW BALANCE FITNESS', -5_000],
+      ['LATE FEE', -1_000],
+      ['INTEREST CHARGE ON PURCHASES', -400],
+    ]);
+    expect(kinds(s)).toEqual(['payment_summary']);
+    expect(s.validation.status).toBe('verified');
+  });
+
+  it("never changes the statement's balances or lets a statement that doesn't add up pass", () => {
+    const s = card([[['See Your Account New Balance:', 160], at('$999.99', 560)]]);
+    expect(s).toMatchObject({ openingBalanceCents: 50_000, closingBalanceCents: 56_123 });
+    expect(s.validation.status).toBe('failed'); // 500.00 + 50.00 ≠ 561.23 without the interest row
+  });
+});

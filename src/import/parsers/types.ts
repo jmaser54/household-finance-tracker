@@ -59,7 +59,9 @@ export type SetAsideKind =
   /** Card rewards: "Cash back earned this period", "Rewards balance", points, miles. */
   | 'rewards_summary'
   /** Explanatory text ending in an amount: the minimum-payment warning, "a late fee of up to $41.00". */
-  | 'explanatory_text';
+  | 'explanatory_text'
+  /** A card's payment information: "See Your Account New Balance: $…", "Minimum Payment Due: $…". */
+  | 'payment_summary';
 
 /** Where an unread line sits, for the masked diagnostics. Fixed codes only. */
 export interface UnreadContext {

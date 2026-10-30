@@ -101,6 +101,8 @@ const REWARDS_SUMMARY = /\b(rewards?|points|cash ?back|miles)\b/i;
 const DISCLOSURE = /\bonly the minimum payment\b|\bpay(ing)? off\b|\bestimated total\b|\b\d+\s+(years?|months?)\b/i;
 const SENTENCE_WORDS = /\b(you|your|we|our|if|may|will|please)\b/i;
 const isSentence = (text: string) => text.split(/\s+/).length >= 7 && SENTENCE_WORDS.test(text);
+/** A card's payment information, repeated in the body: "New Balance: $…", "Minimum Payment Due: $…". */
+const PAYMENT_SUMMARY = /\b(new balance|minimum (payment|amount)( due)?|payment due|amount due)\b/i;
 const DAILY_BALANCE_HEADING = /\b(daily (ending |ledger |closing )?balances?|balance summary|daily balance summary)\b/i;
 /** Undated lines that are summaries, not transactions: interest-rate tables and year-to-date totals. */
 const SUMMARY_LINE = /\d%|\bAPR\b|\b(19|20)\d{2}\b|year[- ]to[- ]date|\bYTD\b/i;
@@ -425,6 +427,7 @@ function readAccount(all: TextLine[], section: AccountSection, period: Period, p
       if (SECTION_SUMMARY.test(description)) return putAside(index, 'section_summary');
       if (REWARDS_SUMMARY.test(description)) return putAside(index, 'rewards_summary');
       if (DISCLOSURE.test(description) || isSentence(description)) return putAside(index, 'explanatory_text');
+      if (PAYMENT_SUMMARY.test(description)) return putAside(index, 'payment_summary');
       if (SUMMARY_LINE.test(description)) return putAside(index, 'rate_or_year_to_date');
       if (amounts.every((a) => readAmount(a.text)?.absCents === 0)) return putAside(index, 'zero_amounts'); // "Fee waived 0.00"
       if (amounts.length === 1 && description !== '' && UNDATED_CHARGE.test(description) && !NOT_A_CHARGE.test(description)) {
