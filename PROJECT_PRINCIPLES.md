@@ -398,7 +398,7 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - balance validation, including a mismatch;
   - scanned, non-PDF, damaged and no-statement files reported, not guessed;
   - masked diagnostics that contain no values.
-- In the app's oldest engine (CI): every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
+- In the app's oldest engine (CI): with the built-ins Monterey's WebKit lacks removed from the page and the worker, statements still import (Chromium); every synthetic statement imports in WebKit 15.4, standing in for Monterey's built-in WebKit, and in WebKit 17.4, with pdf.js running in its own worker. `check:build` fails if any shipped script uses syntax Safari 15 lacks.
 - When a file can't be read, "Technical details (no statement contents)" names the step that failed, the error type with digits and quoted text removed, structural facts about the file and the engine's features. A test checks it contains none of the synthetic statements' values.
 - Planning and adding (`src/import/plan.test.ts`):
   - transfers and card payments paired, and excluded from totals;
@@ -464,6 +464,7 @@ These remain after mitigation. The app's help text must describe them honestly.
 - **2026-10-30, v2.6.** Statement import fixed for the household Mac. Security requirements are unchanged.
   - Root cause: the app's window uses Monterey's built-in WebKit (older than Safari 16.4), which can't parse pdf.js 6's class static blocks, so the PDF reader never loaded.
   - All shipped scripts, including the pdf.js worker, are now compiled down to Safari 15, enforced by a build check and by CI imports in WebKit 15.4 and 17.4.
+  - Two built-ins pdf.js needs and that engine lacks (`Promise.withResolvers`, `ArrayBuffer.prototype.transferToFixedLength`) are polyfilled, in the page and the worker. A browser test removes them in both and imports statements.
   - Unreadable files now show privacy-safe technical details, and one file's failure no longer marks the rest unreadable.
   - §16 item 11 now records that Monterey's built-in WebKit no longer receives macOS updates.
 

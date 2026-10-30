@@ -64,7 +64,7 @@ const statements = ['checking-2026-03.pdf', 'checking-2026-04.pdf', 'savings-202
   }
   if (errors.length) console.log('Page errors:', errors);
   // pdf.js falls back silently to the page if its worker fails to start.
-  const workerStarted = workers.some((url) => /\/assets\/pdf\.worker\.min-[\w-]+\.js$/.test(url)) &&
+  const workerStarted = workers.some((url) => /\/assets\/pdfjsWorker-[\w-]+\.js$/.test(url)) &&
     !(await page.evaluate(() => 'pdfjsWorker' in globalThis));
   console.log(workerStarted ? 'pdf.js worker started' : 'pdf.js worker did NOT start');
   if (!workerStarted) ok = false;

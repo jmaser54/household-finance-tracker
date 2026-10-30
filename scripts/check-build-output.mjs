@@ -22,7 +22,7 @@ const ALLOWED_URL_PREFIXES = ['http://www.w3.org/', 'https://www.w3.org/'];
 // pdf.js compares as strings, and fake URLs that the core-js polyfills parse
 // to test the browser's URL support. A new URL after a pdf.js upgrade fails
 // this check until it has been reviewed and added here.
-const PDFJS_FILES = /^assets\/(pdf\.worker\.min|pdfjsApp)-[\w-]+\.m?js$/;
+const PDFJS_FILES = /^assets\/(pdfjsWorker|pdfjsApp)-[\w-]+\.js$/;
 const PDFJS_REVIEWED_URLS = new Set([
   // License links in comments.
   'http://www.apache.org/licenses/LICENSE-2.0',

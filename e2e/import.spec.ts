@@ -67,7 +67,7 @@ test('statements are read, reviewed and added without any network traffic', asyn
   expect(consoleMessages).toEqual([]);
   // pdf.js ran in its own worker. If the worker fails to start, pdf.js falls
   // back silently to the page itself, which hides a broken worker build.
-  expect(workers.some((url) => /\/assets\/pdf\.worker\.min-[\w-]+\.js$/.test(url))).toBe(true);
+  expect(workers.some((url) => /\/assets\/pdfjsWorker-[\w-]+\.js$/.test(url))).toBe(true);
   expect(await page.evaluate(() => 'pdfjsWorker' in globalThis)).toBe(false);
 });
 

@@ -64,3 +64,25 @@ test('encrypted, object-stream and linearized PDFs import in the browser too', a
   await expect(page.locator('[data-file-status="parsed"]')).toHaveCount(files.length);
   await expect(page.locator('[data-technical-details]')).toHaveCount(0);
 });
+
+test('statements import when the page and worker lack the built-ins macOS Monterey WebKit lacks', async ({ page }) => {
+  // Remove them in the page and, by rewriting the worker script as it is
+  // served, in pdf.js's worker too, before any app code runs.
+  const removal = `delete Promise.withResolvers; delete ArrayBuffer.prototype.transferToFixedLength;`;
+  let workerRewritten = false;
+  await page.addInitScript(removal);
+  await page.route(/\/assets\/pdfjsWorker-[\w-]+\.js$/, async (route) => {
+    const response = await route.fetch();
+    workerRewritten = true;
+    await route.fulfill({ response, body: `${removal}\n${await response.text()}` });
+  });
+  await createHousehold(page);
+  expect(await page.evaluate(() => typeof (Promise as unknown as { withResolvers?: unknown }).withResolvers)).toBe('undefined');
+  const files = ['checking-2026-03.pdf', 'card-2026-03.pdf', 'structure/aes256-owner-password.pdf'];
+  await page.getByTestId('statement-input').setInputFiles(files.map((f) => `tests/fixtures/synthetic/${f}`));
+  await expect(page.getByText('Reading…')).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('[data-file-status="parsed"]')).toHaveCount(files.length);
+  expect(workerRewritten).toBe(true);
+  // pdf.js ran in its worker, not silently in the page.
+  expect(await page.evaluate(() => 'pdfjsWorker' in globalThis)).toBe(false);
+});
