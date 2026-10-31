@@ -137,8 +137,10 @@ mod smoke {
       const fields = [...document.querySelectorAll('input[type=password]')];
       for (const field of fields) await type(field, PASS);
       document.querySelector('button[type=submit]')?.click();
-      for (let i = 0; i < 75 && !document.querySelector('.preview') && !document.querySelector('[role=alert]'); i++) await new Promise((r) => setTimeout(r, 200));
-      await report('ui-' + (document.querySelector('.preview') ? 'opened' : document.querySelector('[role=alert]') ? 'alert' : 'stuck'));
+      // Home shows the example preview before anything is imported, and the "Your money" card after.
+      const home = () => document.querySelector('.preview, .money-card');
+      for (let i = 0; i < 75 && !home() && !document.querySelector('[role=alert]'); i++) await new Promise((r) => setTimeout(r, 200));
+      await report('ui-' + (home() ? 'opened' : document.querySelector('[role=alert]') ? 'alert' : 'stuck'));
       await report('secure-context-' + window.isSecureContext + '-subtle-' + (typeof crypto.subtle));
 
       // 1b. Import a SYNTHETIC statement through the real UI: file input ->
