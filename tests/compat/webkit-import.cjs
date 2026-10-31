@@ -77,6 +77,26 @@ const statements = [
     !(await page.evaluate(() => 'pdfjsWorker' in globalThis));
   console.log(workerStarted ? 'pdf.js worker started' : 'pdf.js worker did NOT start');
   if (!workerStarted) ok = false;
+
+  // Then add them and use the transaction list in the same engine: open it,
+  // open one transaction, choose a category, and see it change.
+  let reviewOk = false;
+  try {
+    await page.click('.import-footer button.primary-button');
+    await page.waitForSelector('text=Your money');
+    await page.click('text=See your transactions');
+    await page.waitForSelector('.transaction-row');
+    await page.fill('input[type=search]', 'Sample Coffee');
+    await page.click('.transaction-row >> nth=0');
+    await page.click('.detail-panel .category-button:has-text("Eating Out")');
+    const chip = await page.textContent('.transaction-row >> nth=0');
+    reviewOk = /Eating Out/.test(chip ?? '');
+  } catch (error) {
+    console.log('Transaction list failed:', String(error).slice(0, 300));
+  }
+  console.log(reviewOk ? 'Transaction list and category choice work' : 'Transaction list or category choice did NOT work');
+  if (!reviewOk) ok = false;
+  if (errors.length) console.log('Page errors:', errors);
   await browser.close();
   // One card per account: each of the two combined statements gives two.
   if (cards.length !== statements.length + 2 || !ok) {

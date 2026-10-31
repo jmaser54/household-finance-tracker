@@ -7,6 +7,7 @@
  * and refund linking happen afterwards (plan.ts), using src/domain.
  */
 import type { AccountKind, Id, TransactionKind } from '../domain/types';
+import { guessSpendingCategory } from './merchantGuesses';
 
 export interface FirstPass {
   kind: TransactionKind;
@@ -43,7 +44,7 @@ export function classify(transaction: { amountCents: number; description: string
     }
     if (amount > 0) return pass('refund', 'inc.refunds', 0.3, ['Credit on the card: probably a refund'], true);
     if (FEE.test(d)) return pass('fee', 'exp.fees', 0.7, ['Card fee or interest charge'], false);
-    return pass('purchase', 'exp.uncategorized', 0, ['Choose a category'], true);
+    return purchase(d);
   }
 
   if (amount < 0) {
@@ -52,7 +53,7 @@ export function classify(transaction: { amountCents: number; description: string
     }
     if (TRANSFER.test(d)) return pass('transfer', 'xfer.internal', 0.6, ['Looks like a transfer between our accounts'], true);
     if (FEE.test(d)) return pass('fee', 'exp.fees', 0.7, ['Bank fee'], false);
-    return pass('purchase', 'exp.uncategorized', 0, ['Choose a category'], true);
+    return purchase(d);
   }
 
   if (INTEREST_EARNED.test(d)) return pass('interest', 'inc.interest', 0.9, ['Interest paid by the bank'], false);
@@ -63,8 +64,32 @@ export function classify(transaction: { amountCents: number; description: string
   return pass('income', 'inc.uncategorized', 0, ['Money in: choose what it was (pay, gift, refund…)'], true);
 }
 
+/** Money going out on a purchase: a conservative built-in guess, or Uncategorized and ready to sort. */
+function purchase(description: string): FirstPass {
+  const guess = guessSpendingCategory(description);
+  if (guess) return { kind: 'purchase', categoryId: guess.categoryId, confidence: 0.7, reasons: [guess.reason], needsReview: false };
+  return { kind: 'purchase', categoryId: 'exp.uncategorized', confidence: 0, reasons: ['Choose a category'], needsReview: true };
+}
+
 /** A friendlier merchant label; the original description is always kept too. */
 export function merchantFrom(description: string): string {
+  const cleaned = description
+    .replace(/\b(purchase|return|refund|pos|debit card|recurring|autopay)\b/gi, ' ')
+    .replace(/\b(ref|id|conf)\s*#?\s*\w*\d\w*/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  const label = cleaned === '' ? description.trim() : cleaned;
+  // Words become "Title Case"; abbreviations and anything with a digit stay as printed ("ATM", "XXXX7310", "#12").
+  return label
+    .split(' ')
+    .map((word) => (/\d/.test(word) || ABBREVIATIONS.has(word.toUpperCase()) ? word : word.toLowerCase().replace(/\b([a-z])/g, (c) => c.toUpperCase())))
+    .join(' ');
+}
+
+const ABBREVIATIONS = new Set(['ATM', 'ACH', 'CVS', 'USA', 'LLC', 'BP', 'AT&T', 'TV', 'DMV', 'IRS', 'HOA', 'PPD', 'WEB']);
+
+/** How earlier versions tidied names, to recognise a name nobody has changed (see upgradeLedger). */
+export function legacyMerchantFrom(description: string): string {
   const cleaned = description
     .replace(/\b(purchase|return|refund|pos|debit card|recurring|autopay)\b/gi, ' ')
     .replace(/\b(ref|id|conf)\s*#?\s*\w*\d\w*/gi, ' ')

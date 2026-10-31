@@ -108,7 +108,6 @@ export function ImportScreen({
   // Keyed by statement: "<file index>:<account section>", as one PDF can hold several accounts.
   const [choices, setChoices] = useState<Map<string, AccountChoice>>(new Map());
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [acceptedFailures, setAcceptedFailures] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -179,7 +178,8 @@ export function ImportScreen({
     }));
     return planStatements(ledger, inputs).map((draft, n) => {
       const { fileIndex, key } = entries[n]!;
-      const blocked = draft.input.statement.validation.status === 'failed' && !acceptedFailures.has(key);
+      // A statement that fails its checks can't be added (PROJECT_PRINCIPLES.md §12).
+      const blocked = draft.input.statement.validation.status === 'failed';
       return {
         ...draft,
         fileIndex,
@@ -190,7 +190,7 @@ export function ImportScreen({
         })),
       };
     });
-  }, [read, choices, excluded, acceptedFailures, ledger]);
+  }, [read, choices, excluded, ledger]);
 
   const toAdd = drafts.reduce((n, d) => n + d.rows.filter((r) => r.include).length, 0);
   const missingNames = drafts.some((d) => d.account.type === 'new' && d.account.displayName.trim() === '');
@@ -255,15 +255,6 @@ export function ImportScreen({
               diagnostics={outcome.diagnostics}
               fileName={file.name}
               onChoice={(choice) => setChoice(draft.key, choice)}
-              acceptedFailure={acceptedFailures.has(draft.key)}
-              onAcceptFailure={(accepted) =>
-                setAcceptedFailures((s) => {
-                  const next = new Set(s);
-                  if (accepted) next.add(draft.key);
-                  else next.delete(draft.key);
-                  return next;
-                })
-              }
               onToggleRow={(r) => toggleRow(`${draft.key}:${r}`)}
             />
           ));
@@ -295,8 +286,6 @@ function StatementCard({
   diagnostics,
   fileName,
   onChoice,
-  acceptedFailure,
-  onAcceptFailure,
   onToggleRow,
 }: {
   ledger: LedgerDocument;
@@ -304,8 +293,6 @@ function StatementCard({
   diagnostics: string[];
   fileName: string;
   onChoice: (choice: AccountChoice) => void;
-  acceptedFailure: boolean;
-  onAcceptFailure: (accepted: boolean) => void;
   onToggleRow: (row: number) => void;
 }) {
   const s = draft.input.statement;
@@ -392,13 +379,9 @@ function StatementCard({
           {status === 'failed' && (
             <div class="warning">
               <p>
-                <strong>These transactions don't add up to the statement's balances.</strong> Some lines may not have
-                been read correctly, so nothing from this statement is added unless you choose to.
+                <strong>These transactions don't add up to the statement's balances,</strong> so this statement can't
+                be added. Some lines may not have been read correctly, and adding them could make your totals wrong.
               </p>
-              <label class="checkbox">
-                <input type="checkbox" checked={acceptedFailure} onChange={(e) => onAcceptFailure(e.currentTarget.checked)} />
-                I've checked these transactions; add them anyway
-              </label>
             </div>
           )}
           {overlaps > 0 && <p class="hint">This statement overlaps one already added. Lines already in your records are skipped.</p>}
@@ -450,7 +433,7 @@ function StatementCard({
                     type="checkbox"
                     aria-label={`Add ${row.transaction.description}`}
                     checked={row.include}
-                    disabled={locked || (status === 'failed' && !acceptedFailure)}
+                    disabled={locked || status === 'failed'}
                     onChange={() => onToggleRow(r)}
                   />
                 </td>

@@ -86,14 +86,14 @@ test('unreadable, scanned and unsupported PDFs are explained, never guessed', as
   await expect(page.getByText('Example with made-up numbers')).toBeVisible();
 });
 
-test('a statement whose balances do not add up is held back until confirmed', async ({ page }) => {
+test('a statement whose balances do not add up can never be added', async ({ page }) => {
   await createHousehold(page);
   await choose(page, ['checking-balance-mismatch.pdf']);
-  await expect(page.getByText("These transactions don't add up to the statement's balances.")).toBeVisible();
+  await expect(page.getByText("These transactions don't add up to the statement's balances,")).toBeVisible();
+  await expect(page.getByText("so this statement can't be added", { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add 0 transactions' })).toBeDisabled();
-  await page.getByLabel("I've checked these transactions; add them anyway").check();
-  await page.getByRole('button', { name: 'Add 2 transactions' }).click();
-  await expect(page.getByText(/Added 2 transactions from 1 statement\./)).toBeVisible();
+  await expect(page.getByLabel(/add them anyway/)).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /^Add / }).first()).toBeDisabled();
 });
 
 test('rows can be left out, and cancelling adds nothing', async ({ page }) => {

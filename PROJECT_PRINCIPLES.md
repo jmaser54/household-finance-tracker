@@ -2,7 +2,7 @@
 
 **Status:** Canonical, living source of truth for product, privacy, security, and financial-correctness requirements.
 **Supersedes:** `docs/reference/household-finance-product-and-security-principles.md`, kept for history only. Do not edit it or develop against it.
-**Last reviewed:** 2026-10-30 (v2.12: card payment information is not a transaction)
+**Last reviewed:** 2026-10-31 (v2.13: review phase 1, see and sort transactions; plain-English categories)
 
 ## How to use this document
 
@@ -241,10 +241,10 @@ These are the contract for every calculation. Each is covered by automated tests
 3. **Credit-card payments are not spending.** This covers the payment from checking and the matching credit on the card.
 4. **Transfers between our own accounts** are neither income nor expenses.
 5. **Moving money into savings** is not spending.
-6. **Employment income from both spouses** is one category: Employment Income.
+6. **Employment income from both spouses** is one category, shown as *Paychecks*.
 7. **Family gifts** are tracked separately from employment income.
 8. **Refunds** reduce their original expense category when the original purchase can be identified. Otherwise they are flagged for review. They never automatically inflate ordinary income.
-9. **Cash withdrawals** may be classified as *Cash / Untracked Cash Spending* without explanation. The user can optionally annotate a withdrawal, reclassify it, or split it across categories.
+9. **Cash withdrawals** may be classified as *Cash* (untracked cash spending) without explanation. The user can optionally annotate a withdrawal, reclassify it, or split it across categories.
 10. **Actual net cash flow = recognized income − recognized expenses**, excluding transfers and card payments.
 11. **Net cash flow is not the change in a checking balance,** and the UI never conflates the two.
 12. Transfers stay visible as their own type but are excluded from income and expense totals.
@@ -253,13 +253,12 @@ These are the contract for every calculation. Each is covered by automated tests
 
 ## 11. Categorization
 
-- Use a familiar taxonomy with a small number of top-level categories and optional one-level subcategories. **Childcare & School** is a prominent, independent category.
-- Income is separate from spending. The income categories are:
-  - Employment Income,
-  - Family Gifts,
-  - Refunds & Reimbursements,
-  - Interest & Investment Income,
-  - Other Income.
+- **One flat, plain-English list** (chosen by the household, 2026-10-31):
+  - *Spending:* Home, Bills & Utilities, Groceries, Eating Out, Transportation, Shopping, Health, Entertainment, Travel, Pets, Gifts & Giving, Fees, Cash, Other.
+  - *Money in:* Paychecks, Gifts, Refunds, Interest, Other Income.
+  - *Uncategorized* (spending and money in) for anything the app can't classify with confidence: it is "ready to sort".
+  - *Moved between your accounts* (between our accounts, credit card payments) stays separate and is excluded from spending and income.
+- **Category ids never change.** Renaming changes display names only, so transactions, rules and backups keep working. Categories not in the list (Childcare & School, Kids & Family, Insurance, Personal Care, Taxes, and the former subcategories) are hidden from pickers, not removed: their ids stay valid, anything in them keeps counting, and they can be shown again. Subcategories count under their parent (Rent & Mortgage under Home, Utilities under Bills & Utilities).
 - **No simplistic rules.** A company deposit is not automatically employment income, and a person's name is not automatically a family gift.
 - **Evidence** comes from:
   - description,
@@ -272,7 +271,8 @@ These are the contract for every calculation. Each is covered by automated tests
   - prior corrections.
 
   Every automatic classification carries a confidence score and plain-language reasons, and uncertain ones are flagged.
-- **Corrections** become editable rules and are **never silently overwritten** by later imports. Users can rename and merge merchants, change categories, and split transactions.
+- **Built-in starting guesses are conservative.** A purchase gets a category from its name only when a word on its own says what it is (e.g. "PHARMACY", "GROCERY", "NETFLIX"). Shops that sell many kinds of things are left Uncategorized and ready to sort rather than confidently wrong.
+- **Corrections are never silently overwritten** by later imports or guesses. Choosing a category changes **only that transaction**. Applying it to the other transactions with the same name, and to future imports, is always an **explicit choice** (unticked by default, with the exact count shown); it never changes anything the person set by hand. Names can be changed; the statement's original description is always kept and shown. Splitting and merging come later, only if needed.
 - **Catch-all categories:** Other and Uncategorized remain available. A large share landing there is surfaced as a quality problem to fix.
 - Categorization is tuned against real examples **inside the app on the Mac**, never by sending data to an AI service.
 
@@ -393,6 +393,13 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - two-step restore with a clear confirmation, from the app and from the setup screen.
 - Inside the packaged, sandboxed Mac app (macOS CI, with a fixed container file standing in for the panels): backup, wrong passphrase refused, commit without opening refused, restore, and restored data reopening intact. The backup and pre-restore files are age-encrypted with no plaintext.
 
+**Seeing and sorting transactions (review phase 1), verified by tests on SYNTHETIC data:**
+- Categories (`src/domain/categories.test.ts`): the household's list and order; every earlier id kept; hidden ones still valid; an older household's categories refreshed by id with totals unchanged.
+- Starting guesses (`src/import/merchantGuesses.test.ts`): each word list maps as intended; mixed-goods shops and look-alike words (e.g. "VET CLINIC", "CLEARWATER", "MARKETPLACE") stay Uncategorized.
+- Corrections (`src/review/edits.test.ts`, `src/import/plan.test.ts`): a category changes only that transaction unless "also" is chosen; "also" changes exactly the counted others (same name and direction, not set by hand) and is remembered for the next import; the person's own choices are never overwritten; a transfer given a spending category starts counting and back again; refunds reduce spending; renaming never edits the statement's text; older households get guesses and tidier names only where nothing was set by hand.
+- Browser (`e2e/transactions.spec.ts`, Chromium; WebKit 15.4 and 17.4 in CI): the home scoreboard, the list, search by name and amount, filters, the panel, the explicit "also" choice, renaming and notes, transfers, and the sorting flow to "All sorted". Statements that fail their checks can't be added.
+- Background saving (`src/ui/saveQueue.test.ts`): changes made during a save are saved together next; a failed save is reported and retried; locking and backups wait for the last save.
+
 **Statement import (Phase D), verified by tests on SYNTHETIC PDFs:**
 - Reading (`src/import/readStatement.test.ts`), with the real pdf.js legacy build in Node, which lacks `Promise.try` like Safari 17:
   - every row, sign, date and description of the checking, savings and card layouts;
@@ -430,7 +437,7 @@ Tests were mutation-checked: a rule was deliberately broken and a test confirmed
   - the existing calculations give the right totals on imported data.
 
   Mutation-checked: transfer pairing, period-aware dedupe, and column signs.
-- Browser tests (Chromium, and WebKit in macOS CI), recording every request, CSP violation and console message while three statements are read, reviewed and added: **no request beyond the app's own files, no violations, no console output**. Also re-import, overlap, scanned and letter files, balance mismatch held back, rows left out, and cancel.
+- Browser tests (Chromium, and WebKit in macOS CI), recording every request, CSP violation and console message while three statements are read, reviewed and added: **no request beyond the app's own files, no violations, no console output**. Also re-import, overlap, scanned and letter files, a balance mismatch that can't be added, rows left out, and cancel.
 - Inside the packaged, sandboxed Mac app (macOS CI, Intel and Apple Silicon): a synthetic statement imported through the real UI, then recognised as already added on the next run. The saved data file is encrypted and shows none of the statement's text.
 
 **Not yet implemented, so no claims may be made about these yet:**
@@ -476,6 +483,13 @@ These remain after mitigation. The app's help text must describe them honestly.
 | D6 | Updates | Manual: install a newer build. Any update check needs approval (§3.1). |
 
 ## Change log
+
+- **2026-10-31, v2.13.** Review phase 1, "See and sort". Security requirements and §10 rules are unchanged.
+  - A transaction list with search, month/category/account filters and a "ready to sort" toggle; a side panel to choose a category, rename, or add a note; a home scoreboard ("N transactions, N ready to sort").
+  - Plain-English categories by display name only (ids unchanged, unused ones hidden, not removed); §10.6, §10.9 and §11 updated to match.
+  - Conservative built-in starting guesses.
+  - Applying a category to others is an explicit choice and is remembered for future imports.
+  - The option to add a statement that fails its checks was removed: failed statements can't be added.
 
 - **2026-10-30, v2.12.** The household identified the last two unread lines on two card statements as payment information ("See Your Account New Balance: $…", "Minimum Payment Due: $…"). Undated lines naming the new balance, minimum payment or payment due are now set aside as payment information and listed; dated rows and undated interest and fees are unaffected. Nothing else changed.
 
@@ -524,7 +538,7 @@ These remain after mitigation. The app's help text must describe them honestly.
 - **2026-10-29, v2.5.** Phase D: PDF statement import and review.
   - pdf.js (legacy build) runs in the app, with masked diagnostics.
   - A general table reader handles the common checking, savings and card layouts.
-  - Review screen with duplicate and overlap detection; balance-mismatched statements are held back.
+  - Review screen with duplicate and overlap detection; balance-mismatched statements are held back (since v2.13 they can't be added at all).
   - First-pass classification following §10–§11.
   - PDFs are never stored.
   - Real banks' layouts remain to be confirmed on the household Mac.

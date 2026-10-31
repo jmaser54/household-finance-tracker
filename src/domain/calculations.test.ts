@@ -130,10 +130,10 @@ describe('financial definitions (PROJECT_PRINCIPLES.md §10)', () => {
 
   it('rolls subcategories into their parent and keeps totals traceable to transactions', () => {
     const rent = tx({ amountCents: -200_000, categoryId: 'exp.housing.rent_mortgage' });
-    const power = tx({ amountCents: -9_000, categoryId: 'exp.housing.utilities' });
-    const s = run(rent, power);
+    const repair = tx({ amountCents: -9_000, categoryId: 'exp.housing.home' });
+    const s = run(rent, repair);
     expect(s.expenseByCategory).toEqual([
-      { categoryId: 'exp.housing', totalCents: 209_000, transactionIds: [rent.id, power.id] },
+      { categoryId: 'exp.housing', totalCents: 209_000, transactionIds: [rent.id, repair.id] },
     ]);
   });
 

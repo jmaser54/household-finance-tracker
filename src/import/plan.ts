@@ -10,6 +10,7 @@ import type { DateRange } from '../domain/dates';
 import { matchTransfers } from '../domain/transfers';
 import type { Account, AccountKind, Id, Statement, Transaction } from '../domain/types';
 import type { LedgerDocument } from '../storage/ledger';
+import { kindFor, ruleFor } from '../review/edits';
 import { classify, merchantFrom } from './classify';
 import type { ParsedStatement, ParsedTransaction } from './parsers/types';
 
@@ -226,7 +227,20 @@ export function applyImport(
       }
       if (!row.include || row.transaction.amountCents === null) continue;
       const t = row.transaction;
-      const first = classify({ amountCents: t.amountCents!, description: t.description }, kindOf.get(accountId)!);
+      const merchant = merchantFrom(t.description);
+      let first = classify({ amountCents: t.amountCents!, description: t.description }, kindOf.get(accountId)!);
+      // The person's own "use this for every …" choice outranks the built-in first pass.
+      const rule = ruleFor(next.rules, merchant, t.amountCents!);
+      const ruleCategory = rule && next.categories.find((c) => c.id === rule.set.categoryId);
+      if (rule && ruleCategory) {
+        first = {
+          kind: kindFor({ kind: first.kind, amountCents: t.amountCents! }, ruleCategory),
+          categoryId: ruleCategory.id,
+          confidence: 0.9,
+          reasons: [`You chose ${ruleCategory.name} for every "${rule.match.text}"`],
+          needsReview: false,
+        };
+      }
       const transaction: Transaction = {
         id: options.newId(),
         accountId,
@@ -235,9 +249,15 @@ export function applyImport(
         ...(t.transactionDate ? { transactionDate: t.transactionDate } : {}),
         amountCents: t.amountCents!,
         originalDescription: t.description,
-        merchant: merchantFrom(t.description),
+        merchant,
         kind: first.kind,
-        classification: { categoryId: first.categoryId, source: 'heuristic', confidence: first.confidence, reasons: [...first.reasons, ...row.reasons] },
+        classification: {
+          categoryId: first.categoryId,
+          source: rule && ruleCategory ? 'rule' : 'heuristic',
+          confidence: first.confidence,
+          ...(rule && ruleCategory ? { ruleId: rule.id } : {}),
+          reasons: [...first.reasons, ...row.reasons],
+        },
         needsReview: first.needsReview || row.status === 'check',
         dedupeKey: dedupeKey({ accountId, postedDate: t.postedDate, amountCents: t.amountCents!, originalDescription: t.description }),
       };

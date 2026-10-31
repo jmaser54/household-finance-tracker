@@ -7,6 +7,7 @@ import { summarize } from '../domain/calculations';
 import { emptyLedger, parseLedger, serializeLedger, type LedgerDocument } from '../storage/ledger';
 import type { ParsedStatement } from './parsers/types';
 import type { PdfJs } from './pdfText';
+import { setCategory } from '../review/edits';
 import { applyImport, planStatements, suggestAccount, type StatementInput } from './plan';
 import { readStatement } from './readStatement';
 
@@ -237,5 +238,18 @@ describe('a statement that reconciles with lines excluded', () => {
     const first = importInto(emptyLedger(), ['checking-ambiguous-lines-2026-03.pdf']);
     const again = importInto(first.ledger, ['checking-ambiguous-lines-2026-03.pdf']);
     expect(again.added).toBe(0);
+  });
+});
+
+describe('choices the person made carry into the next import', () => {
+  it('a remembered "use this for every …" choice categorises new transactions with that name', () => {
+    const first = importInto(emptyLedger(), ['checking-2026-03.pdf']);
+    const grocer = find(first.ledger, 'EXAMPLE GROCER')[0]!;
+    const chosen = setCategory(first.ledger, grocer.id, 'exp.shopping', { now: new Date('2026-04-02T12:00:00Z'), newId: () => `id-${++counter}`, alsoOthers: true }).ledger;
+    const next = importInto(chosen, ['checking-2026-04.pdf']);
+    const april = find(next.ledger, 'EXAMPLE GROCER').find((t) => t.postedDate.startsWith('2026-04'))!;
+    expect(april).toMatchObject({ needsReview: false, classification: { categoryId: 'exp.shopping', source: 'rule' } });
+    // The built-in guess (Groceries) applies only where no choice was made.
+    expect(find(first.ledger, 'EXAMPLE PHARMACY')[0]!.classification.categoryId).toBe('exp.health');
   });
 });

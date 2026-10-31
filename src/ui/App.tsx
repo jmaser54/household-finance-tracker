@@ -5,8 +5,11 @@ import { defaultBackend, type VaultBackend } from '../storage/vault';
 import { RestoreScreen } from './Backup';
 import { ImportScreen } from './Import';
 import type { ImportResult } from '../import/plan';
+import { isReadyToSort, upgradeLedger } from '../review/edits';
 import { Landing } from './Landing';
 import { messageFor } from './messages';
+import { createSaveQueue, type SaveState } from './saveQueue';
+import { NO_FILTERS, TransactionsScreen, type Filters } from './Transactions';
 import { useIdleLock } from './useIdleLock';
 import { NoticeScreen, SetupScreen, UnlockScreen } from './VaultScreens';
 
@@ -16,6 +19,8 @@ type Ready = {
   recoveredFromPrevious: boolean;
   restored?: { passphraseChanged: boolean };
   imported?: { added: number; statements: number; needsReview: number };
+  /** Set while the transaction list is open. */
+  transactions?: { filters: Filters };
 };
 
 /** Loads pdf.js (a separate bundled chunk) only when statements are added. */
@@ -40,6 +45,9 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
   const backend = useMemo(() => provided ?? defaultBackend(), [provided]);
   const [screen, setScreen] = useState<Screen>({ name: 'loading' });
   const [restoring, setRestoring] = useState<LedgerDocument | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  // Edits are shown at once and saved in the background, one save at a time.
+  const saver = useMemo(() => createSaveQueue((ledger: LedgerDocument) => saveHousehold(backend, ledger), setSaveState), [backend]);
 
   useEffect(() => {
     backend
@@ -65,7 +73,7 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
   const unlock = async (passphrase: string) => {
     try {
       const opened = await openHousehold(backend, passphrase);
-      setScreen({ name: 'ready', ...opened });
+      setScreen({ name: 'ready', ...opened, ledger: upgradeLedger(opened.ledger) });
       return null;
     } catch (error) {
       return messageFor(errorCode(error));
@@ -73,14 +81,16 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
   };
 
   const lock = useCallback(async () => {
+    await saver.flush().catch(() => undefined);
     await backend.lock().catch(() => undefined);
     // In the Mac app, reloading discards every decrypted value held by the page.
     if (backend.persistent) window.location.reload();
     else setScreen({ name: 'unlock' });
-  }, [backend]);
+  }, [backend, saver]);
 
   const backup = async (ready: Ready) => {
     try {
+      await saver.flush();
       const ledger = await makeBackup(backend, ready.ledger);
       setScreen({ ...ready, ledger });
       return { ok: true as const };
@@ -106,7 +116,7 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
     try {
       const { ledger, passphraseChanged } = await confirmRestore(backend, restoring);
       setRestoring(null);
-      setScreen({ name: 'ready', ledger, recoveredFromPrevious: false, restored: { passphraseChanged } });
+      setScreen({ name: 'ready', ledger: upgradeLedger(ledger), recoveredFromPrevious: false, restored: { passphraseChanged } });
       return null;
     } catch (error) {
       return messageFor(errorCode(error), 'backup');
@@ -121,6 +131,7 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
 
   const confirmImport = async (result: ImportResult) => {
     try {
+      await saver.flush();
       await saveHousehold(backend, result.ledger);
       setScreen({
         name: 'ready',
@@ -171,8 +182,38 @@ export function App({ backend: provided }: { backend?: VaultBackend }) {
     case 'problem':
       return <NoticeScreen title="Something went wrong" message={messageFor(screen.code)} />;
     case 'ready':
+      if (screen.transactions) {
+        return (
+          <TransactionsScreen
+            ledger={screen.ledger}
+            saveState={saveState}
+            initialFilters={screen.transactions.filters}
+            onChange={(ledger) => {
+              setScreen((current) => (current.name === 'ready' ? { ...current, ledger } : current));
+              saver.schedule(ledger);
+            }}
+            onHome={() =>
+              setScreen((current) => {
+                if (current.name !== 'ready') return current;
+                const { transactions: _list, ...home } = current;
+                return home;
+              })
+            }
+            onLock={lock}
+          />
+        );
+      }
       return (
         <Landing
+          money={{
+            transactions: screen.ledger.transactions.length,
+            statements: screen.ledger.statements.length,
+            toSort: screen.ledger.transactions.filter(isReadyToSort).length,
+          }}
+          onTransactions={(onlyToSort) => {
+            const { imported: _imported, restored: _restored, ...rest } = screen;
+            setScreen({ ...rest, transactions: { filters: { ...NO_FILTERS, onlyToSort } } });
+          }}
           onLock={lock}
           onStatements={(files) => setScreen({ name: 'import', from: screen, files })}
           backups={{

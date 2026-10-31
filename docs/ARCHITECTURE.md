@@ -275,10 +275,12 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
    - **Accounts:** each statement is matched to an existing account by type and last four digits, or proposed as a new, nameable account. Several months of a new account share one account.
    - **Duplicates and overlaps**, via `src/domain/dedupe.ts`: the same file again is "already added". Lines in an already-imported period are matched as a multiset, so genuine identical purchases survive. Near-matches are marked "Check this".
    - Each row shows *New*, *Already added*, *Check this* or *Can't use*, and can be left out.
-   - **A statement whose balances don't add up is held back** until you tick "I've checked these transactions; add them anyway".
+   - **A statement whose balances don't add up can't be added.** (Until v2.13 it could be added after ticking a box; that option was removed.)
 6. **Adding** (`applyImport`, one atomic save):
    - **First-pass classification** (`classify.ts`), following §10 of the principles:
-     - ATM withdrawals are *Cash / Untracked*, with no explanation needed;
+     - ATM withdrawals are *Cash*, with no explanation needed;
+     - purchases get a conservative starting guess from words in their name (`merchantGuesses.ts`), else stay Uncategorized and ready to sort;
+     - a remembered choice ("use this for every …", made by the person) outranks the built-in first pass;
      - card payments and transfers are marked from the statement's wording;
      - savings interest is *Interest*;
      - deposits are **not** assumed to be employment income. "Payroll" only suggests it, flagged to confirm;
@@ -312,6 +314,14 @@ The types live in `src/domain/types.ts` and the taxonomy in `src/domain/categori
 - **Unmarked amounts in a single Amount column on a bank statement with no running balance:** the sign can't be determined, so those rows are flagged and not added.
 
 **Whether it reads *your* banks' statements is unknown until you try them on your Mac.** That is by design: no real statement has been seen by anyone but you.
+
+## 9a. Seeing and sorting transactions (*done*, review phase 1)
+
+- **Home** shows a "Your money" scoreboard (transactions, statements, ready to sort) once anything is imported, with **See your transactions** and **Sort them now**. The example with made-up numbers shows only before then.
+- **Transaction list** (`src/ui/Transactions.tsx`): newest first under day headings; tidy name, account, category chip and amount (money in green with "+"); transfers and card payments are quieter and say "Moved between your accounts". One search box (name, statement text, note, or amount), filters for month, category and account, and an **Only ready to sort** toggle. *Ready to sort* means Uncategorized, or flagged for a closer look (a possible paycheck, an unmatched refund, an unpaired transfer, a date the statement didn't print).
+- **Side panel:** a grid of category buttons (icon and colour each), with spending and money in apart and transfers last; an editable name, with the statement's original text always shown and never edited; a note; **Looks right** for a flagged guess that is correct. Choosing changes only that transaction. When other transactions have the same name and direction, an **unticked** checkbox names the exact count to apply it to them and to future imports too (stored as a rule; it never touches anything set by hand). While sorting, the next one waiting opens by itself; "All sorted — nice work!" when none are left.
+- **Logic** (`src/review/edits.ts`, pure): `setCategory`, `othersLike`, `looksRight`, `setName`, `setNote`, `ruleFor` (used by the import), `kindFor` (spending or income given to a transfer makes it count; a transfer category stops it counting), and `upgradeLedger`, run when a household opens: built-in categories refreshed by id, starting guesses and tidier names only where nothing was set by hand.
+- **Saving:** each change shows at once and is saved in the background (`src/ui/saveQueue.ts`), one encrypted save at a time; changes made meanwhile go in the next save. Locking (including auto-lock), backups and imports wait for the last save. A failed save is shown and retried.
 
 ## 10. Refining parsers without sharing statements (*done*, Phase D)
 
@@ -372,7 +382,9 @@ Each phase is small, tested, pushed, and reviewed by you before the next starts.
 | **B. Encrypted storage** *(done)* | Passphrase setup and unlock screen, lock and auto-lock, atomic save and load, previous-version fallback, single-writer lock, error messages | Storage, interruption and lock tests pass |
 | **C. Backup and restore** *(done)* | Make a backup (household passphrase, read-back check), two-step restore with confirmation, pre-restore copy, file panels via Rust | Backup and restore tests pass, including interruption at every step, and a restore rehearsal on your Mac |
 | **D. PDF import** *(done)* | pdf.js, parser interface, synthetic layouts, scanned-PDF detection, review screen, diagnostics | Import tests pass |
-| **E. Dashboard** | Overview, spending and income, comparisons, drilldowns, review queue, rules from corrections | Totals traceable; tests pass |
+| **E1. See and sort** *(done)* | Transaction list (search, month/category/account filters, ready to sort), side panel (category, name, note, "looks right", explicit "also for the others"), conservative starting guesses, plain-English categories, home scoreboard, background saving, failed statements can't be added | Tests pass, including WebKit 15.4 |
+| **E2. Dashboard** | Month at a glance (latest full month, easy month switching), where it went and where it came from, drilldown to the list | Totals traceable; tests pass |
+| **E3. Polish** | Illustrations, custom category icons, friendly details | — |
 | **F. Go-live** | Checklist in §14 | You import real statements, on your Mac only |
 
 **Getting the app onto your Mac** (no paid signing):
